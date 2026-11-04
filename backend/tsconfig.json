@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2022",
+    "moduleResolution": "node",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
+    "esModuleInterop": true,
+    "strict": true,
+    "strictPropertyInitialization": false,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+}

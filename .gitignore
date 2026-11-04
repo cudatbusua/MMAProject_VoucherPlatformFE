@@ -1,0 +1,34 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.data/
+.cache/
+*.log
+.DS_Store
+
+# Editors and operating system
+.idea/
+.vscode/*
+!.vscode/extensions.json
+Thumbs.db
+
+# Frontend and mobile generated files
+.expo/
+web-build/
+.next/
+out/
+build/
+.dart_tool/
+.flutter-plugins*
+**/android/.gradle/
+**/android/local.properties
+**/ios/Pods/
+
+# Signing credentials
+*.jks
+*.keystore
+*.p12
+*.mobileprovision

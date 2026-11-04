@@ -1,0 +1,50 @@
+{
+  "name": "voucher-mongo-api",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write src scripts test *.json compose.yaml",
+    "format:check": "prettier --check src scripts test *.json compose.yaml",
+    "db:local": "tsx scripts/local-mongo.ts",
+    "db:seed": "ts-node scripts/seed.ts",
+    "test:persistence": "tsx scripts/check-persistence.ts",
+    "test": "node --require ts-node/register --test test/main-flow.e2e.spec.ts",
+    "test:e2e": "npm run test"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.2.8",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.2.8",
+    "@nestjs/jwt": "^11.0.2",
+    "@nestjs/mongoose": "^11.0.4",
+    "@nestjs/platform-express": "^11.2.8",
+    "@nestjs/swagger": "^11.4.8",
+    "@nestjs/throttler": "^6.7.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "mongoose": "^9.11.4",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.2.8",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/supertest": "^6.0.3",
+    "expect": "^29.7.0",
+    "mongodb-memory-server": "^11.3.0",
+    "prettier": "^3.9.10",
+    "supertest": "^7.1.0",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
