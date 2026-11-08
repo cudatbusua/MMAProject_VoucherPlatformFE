@@ -1,6 +1,6 @@
 # Voucher Platform — project độc lập
 
-Backend mới dùng **NestJS 11 + TypeScript + MongoDB 8 + Mongoose 9**. Project nằm riêng với `Web_BE`; không đọc database, tài khoản, khóa email hoặc khóa thanh toán của project cũ.
+Backend mới dùng **NestJS 11 + TypeScript + MongoDB 8 + Mongoose 9**.
 
 ```text
 voucher-platform/
