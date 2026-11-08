@@ -1,16 +1,30 @@
-# Voucher Web
+# Voucher Web — quản trị, thương hiệu, cửa hàng
 
-Khung cho web ADMIN, BRAND_OWNER và STORE_STAFF. Chưa chọn framework, cài thư viện hoặc triển khai giao diện; thư mục này chưa có lệnh chạy.
+React 19 + Vite + TypeScript + React Router. Đăng nhập email/mật khẩu cho **ADMIN, BRAND_OWNER, BRAND_MANAGER, STORE_STAFF**. Tài khoản CUSTOMER bị từ chối và được hướng dẫn dùng ứng dụng di động.
 
-- src/components/: giao diện dùng chung.
-- src/features/: đăng nhập, thương hiệu, cửa hàng, chiến dịch, quét voucher, báo cáo.
-- src/services/: client API và quản lý phiên.
-- src/types/: kiểu dữ liệu.
-- public/: tài nguyên công khai.
+## Chạy
 
-Backend local: http://127.0.0.1:4100/api.
-Swagger: http://127.0.0.1:4100/docs.
+Yêu cầu backend đang chạy (xem README gốc).
 
-Web dùng email/mật khẩu. Nhân viên phải chọn cửa hàng làm việc trước khi xác nhận QR/OTP.
+```powershell
+cd web
+npm.cmd install
+npm.cmd run dev      # http://127.0.0.1:5173
+npm.cmd run build    # kiểm tra kiểu + build production vào dist/
+```
 
-Xem [quy ước kết nối](../docs/client-integration.md).
+API mặc định `http://127.0.0.1:4100/api`; đổi bằng `VITE_API_URL` trong `web/.env`. Cổng 5173 đã có trong `CORS_ORIGINS` của backend.
+
+## Màn hình theo vai trò
+
+- **ADMIN**: tổng quan doanh thu; tài khoản (tạo, đổi vai trò, gán thương hiệu cho quản lý / cửa hàng cho nhân viên, khóa, đặt lại mật khẩu); thương hiệu (tạo gắn chủ sở hữu, duyệt/từ chối/đình chỉ/khôi phục, xem báo cáo và cửa hàng); duyệt/từ chối chiến dịch; xác nhận/từ chối hoàn tiền thủ công; đơn hàng, lượt sử dụng, nhật ký.
+- **BRAND_OWNER**: báo cáo số liệu thương hiệu (chỉ xem).
+- **BRAND_MANAGER**: tổng quan; chiến dịch (tạo/sửa theo 3 loại DISCOUNT/PREPAID/COMBO, gửi duyệt, rút về nháp, tạm dừng, mở lại, xem tồn kho); cửa hàng (tạo, sửa tọa độ, đóng/mở); tạo nhân viên.
+- **STORE_STAFF**: chọn cửa hàng làm việc; xác nhận voucher bằng camera QR, dán mã QR hoặc OTP 6 số kèm tổng hóa đơn; hiển thị số tiền khách trả và số lượt còn lại; xác nhận thêm lượt với cùng mã; lịch sử hôm nay. Mỗi lần bấm xác nhận dùng một `idempotencyKey`, khi lỗi mạng bấm “Thử lại” sẽ gửi lại đúng key cũ.
+
+## Cấu trúc
+
+- `src/features/{auth,admin,owner,manager,staff}/` — trang theo vai trò.
+- `src/components/` — layout, UI dùng chung, định dạng, chọn thương hiệu.
+- `src/services/` — client API (tự refresh token) và phiên đăng nhập.
+- `src/types/` — kiểu dữ liệu theo schema backend.
