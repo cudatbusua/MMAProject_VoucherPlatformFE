@@ -229,15 +229,22 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
         { session },
       );
       await this.db.vouchers.create(
-        Array.from({ length: order.quantity }, (_, itemIndex) => ({
-          ...order.snapshot,
-          customerId: order.customerId,
-          campaignId: order.campaignId,
-          orderId: order._id,
-          itemIndex,
-          expiresAt: order.snapshot.voucherExpireAt,
-          status: 'ACTIVE',
-        })),
+        [
+          {
+            ...order.snapshot,
+            customerId: order.customerId,
+            campaignId: order.campaignId,
+            orderId: order._id,
+            itemIndex: 0,
+            formatVersion: 2,
+            usageLimit: order.quantity,
+            usedCount: 0,
+            remainingUses: order.quantity,
+            totalPrice: order.totalAmount,
+            expiresAt: order.snapshot.voucherExpireAt,
+            status: 'ACTIVE',
+          },
+        ],
         { session, ordered: true },
       );
       await this.db.campaigns.updateOne(

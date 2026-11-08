@@ -111,3 +111,9 @@ export class SearchDto {
   @ApiPropertyOptional({ default: 20 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit =
     20;
 }
+
+export class CreateBrandDto extends BrandDto {
+  @ApiProperty({ description: 'Chủ sở hữu chỉ xem số liệu; admin chọn tài khoản BRAND_OWNER.' })
+  @IsMongoId()
+  ownerId: string;
+}

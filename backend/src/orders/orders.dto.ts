@@ -25,6 +25,9 @@ export class TokenDto {
   @ApiProperty() @IsMongoId() voucherItemId: string;
 }
 export class RedeemDto {
+  @ApiProperty({ description: 'UUID v4 mới cho mỗi lượt xác nhận; giữ nguyên khi retry do lỗi mạng.' })
+  @IsUUID('4')
+  idempotencyKey: string;
   @ApiProperty() @IsMongoId() storeId: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @Length(20, 100) qrPayload?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @Matches(/^\d{6}$/) otpCode?: string;

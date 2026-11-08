@@ -4,7 +4,7 @@ Dùng MongoDB 8, Mongoose 9, replica set `rs0`. Local tại `127.0.0.1:27018`; l
 
 | Collection mặc định Mongoose | Nội dung | Index chính |
 |---|---|---|
-| users | Email, vai trò, mật khẩu hash, storeIds | email UNIQUE |
+| users | Email, 5 vai trò, mật khẩu hash, brandIds cho manager, storeIds cho staff | email UNIQUE |
 | sessions | Phiên, refresh HMAC, chi nhánh đang làm | expiresAt TTL |
 | otps | HMAC mã email, số lần thử, đã dùng | email UNIQUE; expiresAt TTL có thời gian đệm |
 | brands | Chủ sở hữu và trạng thái duyệt | ownerId |
@@ -13,9 +13,9 @@ Dùng MongoDB 8, Mongoose 9, replica set `rs0`. Local tại `127.0.0.1:27018`; l
 | quotas | Tổng số đã mua/giữ của một khách trên chiến dịch | userId+campaignId UNIQUE |
 | orders | Một chiến dịch mỗi đơn, snapshot quyền lợi | customerId+idempotencyKey UNIQUE; status/expiresAt |
 | payments | Xác nhận demo thành công | orderId UNIQUE; eventId UNIQUE |
-| vouchers | Voucher được cấp sau thanh toán | orderId+itemIndex UNIQUE; customerId/status |
+| vouchers | Một voucher/đơn mới; usageLimit, usedCount, remainingUses, totalPrice | orderId UNIQUE khi formatVersion=2; orderId+itemIndex UNIQUE cho legacy; customerId/status |
 | redeemtokens | QR/OTP HMAC hiện hành | voucherId, tokenHash, otpHash UNIQUE; expiresAt TTL |
-| redemptions | Lịch sử sử dụng, hóa đơn, giảm giá | voucherId UNIQUE |
+| redemptions | Lịch sử sử dụng, hóa đơn, giảm giá | voucherId+sequence UNIQUE; staffId+idempotencyKey UNIQUE |
 | refunds | Yêu cầu hoàn, số tiền, quyết định | voucherId UNIQUE |
 | audits | Người thao tác và hành động | _id mặc định |
 

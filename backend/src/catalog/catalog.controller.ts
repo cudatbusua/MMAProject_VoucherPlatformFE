@@ -5,7 +5,7 @@ import { ObjectIdPipe } from '../common/http';
 import { Database } from '../database/database.module';
 import { CampaignStatus, Role } from '../database/schemas';
 import {
-  BrandDto,
+  CreateBrandDto,
   CampaignDto,
   ReasonDto,
   SearchDto,
@@ -24,11 +24,48 @@ export class BrandController {
     private readonly catalog: CatalogService,
     private readonly db: Database,
   ) {}
-  @Roles(Role.BRAND_OWNER) @Post() create(@CurrentUser() user: Principal, @Body() dto: BrandDto) {
+  @Roles(Role.ADMIN) @Post() create(@CurrentUser() user: Principal, @Body() dto: CreateBrandDto) {
     return this.catalog.createBrand(user, dto);
   }
-  @Roles(Role.BRAND_OWNER) @Get('me') mine(@CurrentUser() user: Principal) {
-    return this.db.brands.find({ ownerId: user.userId });
+  @Roles(Role.BRAND_OWNER, Role.BRAND_MANAGER) @Get('me') async mine(@CurrentUser() user: Principal) {
+    if (user.role === Role.BRAND_OWNER) return this.db.brands.find({ ownerId: user.userId });
+    const manager = await this.db.users.findById(user.userId);
+    return this.db.brands.find({ _id: { $in: manager!.brandIds } });
+  }
+  @Roles(Role.BRAND_OWNER, Role.BRAND_MANAGER, Role.ADMIN) @Get(':id/reports/overview') async report(
+    @Param('id', ObjectIdPipe) id: string,
+    @CurrentUser() user: Principal,
+  ) {
+    await this.catalog.brandAccess(id, user);
+    const campaignIds = await this.db.campaigns.find({ brandId: id }).distinct('_id');
+    const orderIds = await this.db.orders
+      .find({ campaignId: { $in: campaignIds }, status: 'FULFILLED' })
+      .distinct('_id');
+    const gross = await this.db.payments.aggregate([
+      { $match: { orderId: { $in: orderIds } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]);
+    const voucherIds = await this.db.vouchers.find({ brandId: id }).distinct('_id');
+    const refunds = await this.db.refunds.aggregate([
+      { $match: { voucherId: { $in: voucherIds }, status: 'COMPLETED' } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]);
+    const tickets = await this.db.orders.aggregate([
+      { $match: { _id: { $in: orderIds } } },
+      { $group: { _id: null, total: { $sum: '$quantity' } } },
+    ]);
+    return {
+      brandId: id,
+      campaigns: campaignIds.length,
+      paidOrders: orderIds.length,
+      ticketsSold: tickets[0]?.total ?? 0,
+      vouchersIssued: voucherIds.length,
+      redemptions: await this.db.redemptions.countDocuments({ voucherId: { $in: voucherIds } }),
+      grossRevenue: gross[0]?.total ?? 0,
+      refundedAmount: refunds[0]?.total ?? 0,
+      netRevenue: (gross[0]?.total ?? 0) - (refunds[0]?.total ?? 0),
+      currency: 'VND',
+    };
   }
   @Roles(Role.ADMIN) @Get() all() {
     return this.db.brands.find().sort({ createdAt: -1 }).limit(100);
@@ -59,35 +96,35 @@ export class BrandController {
   ) {
     return this.catalog.brandState(id, user, 'APPROVED');
   }
-  @Roles(Role.BRAND_OWNER) @Post(':id/stores') store(
+  @Roles(Role.BRAND_MANAGER) @Post(':id/stores') store(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
     @Body() dto: StoreDto,
   ) {
     return this.catalog.createStore(id, user, dto);
   }
-  @Roles(Role.BRAND_OWNER, Role.ADMIN) @Get(':id/stores') async stores(
+  @Roles(Role.BRAND_MANAGER, Role.ADMIN) @Get(':id/stores') async stores(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
     await this.catalog.brandAccess(id, user);
     return this.db.stores.find({ brandId: id });
   }
-  @Roles(Role.BRAND_OWNER) @Patch('stores/:id') updateStore(
+  @Roles(Role.BRAND_MANAGER) @Patch('stores/:id') updateStore(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
     @Body() dto: UpdateStoreDto,
   ) {
     return this.catalog.updateStore(id, user, dto);
   }
-  @Roles(Role.BRAND_OWNER) @Post(':id/staff') staff(
+  @Roles(Role.BRAND_MANAGER) @Post(':id/staff') staff(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
     @Body() dto: StaffDto,
   ) {
     return this.catalog.createStaff(id, user, dto);
   }
-  @Roles(Role.BRAND_OWNER) @Get(':id/staff') async staffList(
+  @Roles(Role.BRAND_MANAGER) @Get(':id/staff') async staffList(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
@@ -104,14 +141,14 @@ export class CampaignController {
     private readonly catalog: CatalogService,
     private readonly db: Database,
   ) {}
-  @Roles(Role.BRAND_OWNER) @Post('brand/:brandId') create(
+  @Roles(Role.BRAND_MANAGER) @Post('brand/:brandId') create(
     @Param('brandId', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
     @Body() dto: CampaignDto,
   ) {
     return this.catalog.createCampaign(id, user, dto);
   }
-  @Roles(Role.BRAND_OWNER, Role.ADMIN) @Get('brand/:brandId') async mine(
+  @Roles(Role.BRAND_MANAGER, Role.ADMIN) @Get('brand/:brandId') async mine(
     @Param('brandId', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
@@ -121,32 +158,32 @@ export class CampaignController {
   @Roles(Role.ADMIN) @Get('pending') pending() {
     return this.db.campaigns.find({ status: CampaignStatus.PENDING }).limit(100);
   }
-  @Roles(Role.BRAND_OWNER) @Patch(':id') update(
+  @Roles(Role.BRAND_MANAGER) @Patch(':id') update(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
     @Body() dto: UpdateCampaignDto,
   ) {
     return this.catalog.updateCampaign(id, user, dto);
   }
-  @Roles(Role.BRAND_OWNER) @Patch(':id/submit') submit(
+  @Roles(Role.BRAND_MANAGER) @Patch(':id/submit') submit(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
     return this.catalog.transition(id, user, 'submit');
   }
-  @Roles(Role.BRAND_OWNER) @Patch(':id/withdraw') withdraw(
+  @Roles(Role.BRAND_MANAGER) @Patch(':id/withdraw') withdraw(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
     return this.catalog.transition(id, user, 'withdraw');
   }
-  @Roles(Role.BRAND_OWNER) @Patch(':id/pause') pause(
+  @Roles(Role.BRAND_MANAGER) @Patch(':id/pause') pause(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
     return this.catalog.transition(id, user, 'pause');
   }
-  @Roles(Role.BRAND_OWNER) @Patch(':id/resume') resume(
+  @Roles(Role.BRAND_MANAGER) @Patch(':id/resume') resume(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
@@ -165,7 +202,7 @@ export class CampaignController {
   ) {
     return this.catalog.transition(id, user, 'reject', dto.reason);
   }
-  @Roles(Role.BRAND_OWNER, Role.ADMIN) @Get(':id/stock') async stock(
+  @Roles(Role.BRAND_OWNER, Role.BRAND_MANAGER, Role.ADMIN) @Get(':id/stock') async stock(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {

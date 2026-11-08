@@ -19,7 +19,7 @@ import { WalletService } from './wallet.service';
 
 @ApiTags('Orders — demo payment')
 @ApiBearerAuth()
-@Roles(Role.CUSTOMER)
+@Roles(...Object.values(Role))
 @Controller('orders')
 export class OrdersController {
   constructor(
@@ -57,7 +57,7 @@ export class OrdersController {
 }
 @ApiTags('Wallet')
 @ApiBearerAuth()
-@Roles(Role.CUSTOMER)
+@Roles(...Object.values(Role))
 @Controller('wallet')
 export class WalletController {
   constructor(private readonly wallet: WalletService) {}
@@ -82,7 +82,7 @@ export class RedeemController {
     private readonly wallet: WalletService,
     private readonly db: Database,
   ) {}
-  @Roles(Role.CUSTOMER) @Throttle({ default: { limit: 10, ttl: 600000 } }) @Post('token') token(
+  @Roles(...Object.values(Role)) @Throttle({ default: { limit: 10, ttl: 600000 } }) @Post('token') token(
     @CurrentUser() user: Principal,
     @Body() dto: TokenDto,
   ) {
@@ -116,10 +116,10 @@ export class RefundController {
     private readonly wallet: WalletService,
     private readonly db: Database,
   ) {}
-  @Roles(Role.CUSTOMER) @Post() request(@CurrentUser() user: Principal, @Body() dto: RefundDto) {
+  @Roles(...Object.values(Role)) @Post() request(@CurrentUser() user: Principal, @Body() dto: RefundDto) {
     return this.wallet.requestRefund(user.userId, dto);
   }
-  @Roles(Role.CUSTOMER) @Get('me') mine(@CurrentUser() user: Principal) {
+  @Roles(...Object.values(Role)) @Get('me') mine(@CurrentUser() user: Principal) {
     return this.db.refunds.find({ customerId: user.userId }).sort({ createdAt: -1 }).limit(200);
   }
   @Roles(Role.ADMIN) @Get('manual-pending') pending() {

@@ -5,7 +5,7 @@ import { hashPassword } from '../common/crypto';
 import { Database } from '../database/database.module';
 import { CampaignStatus, Role } from '../database/schemas';
 import {
-  BrandDto,
+  CreateBrandDto,
   CampaignDto,
   SearchDto,
   StaffDto,
@@ -18,15 +18,23 @@ import { validateCampaign } from './rules';
 @Injectable()
 export class CatalogService {
   constructor(private readonly db: Database) {}
-  async brandAccess(id: string, user: Principal) {
+  async brandAccess(id: string, user: Principal, write = false) {
     const brand = await this.db.brands.findById(id);
     if (!brand) throw new NotFoundException('Không tìm thấy thương hiệu.');
-    if (user.role !== Role.ADMIN && String(brand.ownerId) !== user.userId)
-      throw new ForbiddenException('Không thuộc thương hiệu của bạn.');
-    return brand;
+    if (user.role === Role.ADMIN) return brand;
+    if (user.role === Role.BRAND_OWNER && String(brand.ownerId) === user.userId && !write) return brand;
+    if (
+      user.role === Role.BRAND_MANAGER &&
+      (await this.db.users.exists({ _id: user.userId, active: true, brandIds: id }))
+    )
+      return brand;
+    throw new ForbiddenException('Không có quyền trong thương hiệu này.');
   }
-  createBrand(user: Principal, dto: BrandDto) {
-    return this.db.brands.create({ ...dto, ownerId: user.userId });
+  async createBrand(user: Principal, dto: CreateBrandDto) {
+    if (user.role !== Role.ADMIN) throw new ForbiddenException();
+    if (!(await this.db.users.exists({ _id: dto.ownerId, role: Role.BRAND_OWNER, active: true })))
+      throw new BadRequestException('Chủ thương hiệu không hợp lệ.');
+    return this.db.brands.create(dto);
   }
   async brandState(
     id: string,
@@ -50,7 +58,7 @@ export class CatalogService {
     });
   }
   async createStore(brandId: string, user: Principal, dto: StoreDto) {
-    await this.brandAccess(brandId, user);
+    await this.brandAccess(brandId, user, true);
     return this.db.stores.create({
       brandId,
       name: dto.name,
@@ -61,7 +69,7 @@ export class CatalogService {
   async updateStore(id: string, user: Principal, dto: UpdateStoreDto) {
     const store = await this.db.stores.findById(id);
     if (!store) throw new NotFoundException();
-    await this.brandAccess(String(store.brandId), user);
+    await this.brandAccess(String(store.brandId), user, true);
     if (dto.name !== undefined) store.name = dto.name;
     if (dto.address !== undefined) store.address = dto.address;
     if (dto.active !== undefined) store.active = dto.active;
@@ -76,7 +84,7 @@ export class CatalogService {
     return store.save();
   }
   async createStaff(brandId: string, user: Principal, dto: StaffDto) {
-    await this.brandAccess(brandId, user);
+    await this.brandAccess(brandId, user, true);
     if (
       (await this.db.stores.countDocuments({ _id: { $in: dto.storeIds }, brandId, active: true })) !==
       dto.storeIds.length
@@ -98,7 +106,7 @@ export class CatalogService {
       throw new BadRequestException('Phải chọn cửa hàng đang hoạt động thuộc thương hiệu.');
   }
   async createCampaign(brandId: string, user: Principal, dto: CampaignDto) {
-    await this.brandAccess(brandId, user);
+    await this.brandAccess(brandId, user, true);
     validateCampaign(dto);
     await this.storesValid(brandId, dto.storeIds);
     return this.db.campaigns.create({ ...dto, brandId });
@@ -111,6 +119,7 @@ export class CatalogService {
   }
   async updateCampaign(id: string, user: Principal, dto: UpdateCampaignDto) {
     const existing = await this.campaignAccess(id, user);
+    await this.brandAccess(String(existing.brandId), user, true);
     if (existing.status === CampaignStatus.ENDED || existing.status === CampaignStatus.PENDING)
       throw new BadRequestException(
         'Rút chiến dịch về nháp trước khi sửa; chiến dịch kết thúc không được sửa.',
@@ -147,6 +156,7 @@ export class CatalogService {
     reason?: string,
   ) {
     const c = await this.campaignAccess(id, user);
+    await this.brandAccess(String(c.brandId), user, true);
     const allowed: Record<typeof action, CampaignStatus[]> = {
       submit: [CampaignStatus.DRAFT],
       withdraw: [CampaignStatus.PENDING],

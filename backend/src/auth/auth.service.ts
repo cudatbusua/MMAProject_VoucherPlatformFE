@@ -22,7 +22,7 @@ export class AuthService {
   }
   async requestOtp(email: string) {
     const existing = await this.db.users.findOne({ email });
-    if (existing && (existing.role !== Role.CUSTOMER || !existing.active))
+    if (existing && !existing.active)
       throw new BadRequestException('Email này không dùng cho đăng nhập khách hàng.');
     const code = randomInt(100000, 1000000).toString();
     const now = new Date();
@@ -75,7 +75,7 @@ export class AuthService {
           { $setOnInsert: { role: Role.CUSTOMER, fullName: '', active: true, storeIds: [] } },
           { upsert: true, returnDocument: 'after', session },
         );
-        if (user.role !== Role.CUSTOMER || !user.active) throw new ForbiddenException();
+        if (!user.active) throw new ForbiddenException();
         const refreshToken = randomToken();
         const [saved] = await this.db.sessions.create(
           [
@@ -99,9 +99,7 @@ export class AuthService {
       });
   }
   async login(email: string, password: string) {
-    const user = await this.db.users
-      .findOne({ email, active: true, role: { $ne: Role.CUSTOMER } })
-      .select('+passwordHash');
+    const user = await this.db.users.findOne({ email, active: true }).select('+passwordHash');
     if (!(await verifyPassword(password, user?.passwordHash)) || !user)
       throw new UnauthorizedException('Email hoặc mật khẩu không đúng.');
     const refreshToken = randomToken();

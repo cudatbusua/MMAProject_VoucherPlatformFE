@@ -22,7 +22,7 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
   let db: Database;
   let seed: Awaited<ReturnType<typeof seedData>>;
   const codes = new Map<string, string>();
-  let admin: string, owner: string, staff: string, customer: string, customerId: string;
+  let admin: string, manager: string, owner: string, staff: string, customer: string, customerId: string;
   let counter = 0;
   const call = (method: 'get' | 'post' | 'patch', path: string, token?: string) => {
     const req = request(app.getHttpServer())[method]('/api' + path);
@@ -100,6 +100,7 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
       (await call('post', '/auth/login').send({ email, password: 'Voucher@123' }).expect(201)).body.data
         .accessToken as string;
     admin = await login('admin@voucher.local');
+    manager = await login('manager@voucher.local');
     owner = await login('owner@voucher.local');
     staff = await login('staff@voucher.local');
     const user = await newCustomer();
@@ -123,6 +124,15 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     });
     await request(app.getHttpServer()).get('/docs-json').expect(200);
   });
+  it('removes the legacy one-redemption-per-voucher unique index before accepting multi-use scans', async () => {
+    await db.redemptions.collection.createIndex({ voucherId: 1 }, { unique: true });
+    await db.onModuleInit();
+    const indexes = await db.redemptions.collection.listIndexes().toArray();
+    expect(indexes.some((i) => i.unique && Object.keys(i.key).length === 1 && i.key.voucherId === 1)).toBe(
+      false,
+    );
+    expect(indexes.some((i) => i.unique && i.key.voucherId === 1 && i.key.sequence === 1)).toBe(true);
+  });
   it('keeps credentials out of JSON, validates body and rejects role escalation', async () => {
     const res = await call('post', '/auth/login')
       .send({ email: 'admin@voucher.local', password: 'Voucher@123' })
@@ -135,7 +145,11 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     await call('post', '/auth/otp/verify')
       .send({ email: 'x@example.com', code: '123456', role: 'ADMIN' })
       .expect(400);
-    await call('post', '/auth/otp/request').send({ email: 'admin@voucher.local' }).expect(400);
+    await call('post', '/auth/otp/request').send({ email: 'admin@voucher.local' }).expect(201);
+    const otpAdmin = await call('post', '/auth/otp/verify')
+      .send({ email: 'admin@voucher.local', code: codes.get('admin@voucher.local') })
+      .expect(201);
+    expect(otpAdmin.body.data.user.role).toBe('ADMIN');
     await call('get', '/admin/orders', customer).expect(403);
     await call('get', '/wallet').expect(401);
     await call('get', '/wallet/not-an-id', customer).expect(400);
@@ -179,14 +193,26 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     expect(response.body.data.role).toBe('BRAND_OWNER');
     expect(response.body.data.passwordHash).toBeUndefined();
   });
-  it('brand approval gates submitting a campaign and protects other owners', async () => {
-    const other = await call('post', '/auth/login')
-      .send({ email: 'newowner@example.com', password: 'Voucher@123' })
+  it('brand approval gates manager submission and blocks cross-brand access', async () => {
+    const otherOwner = await db.users.findOne({ email: 'newowner@example.com' });
+    const brand = await call('post', '/brands', admin)
+      .send({ name: 'Other brand', ownerId: String(otherOwner!._id) })
       .expect(201);
-    const otherToken = other.body.data.accessToken;
-    const brand = await call('post', '/brands', otherToken).send({ name: 'Other brand' }).expect(201);
     const id = brand.body.data.id;
-    await call('post', '/brands/' + id + '/stores', owner)
+    await call('post', '/admin/users', admin)
+      .send({
+        email: 'manager2@example.com',
+        fullName: 'Other Manager',
+        password: 'Voucher@123',
+        role: 'BRAND_MANAGER',
+        brandIds: [id],
+      })
+      .expect(201);
+    const login = await call('post', '/auth/login')
+      .send({ email: 'manager2@example.com', password: 'Voucher@123' })
+      .expect(201);
+    const otherToken = login.body.data.accessToken;
+    await call('post', '/brands/' + id + '/stores', manager)
       .send({ name: 'Foreign', address: 'Address foreign', latitude: 10.7, longitude: 106.7 })
       .expect(403);
     const store = await call('post', '/brands/' + id + '/stores', otherToken)
@@ -204,11 +230,13 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     await call('patch', '/campaigns/' + c.body.data.id + '/submit', otherToken)
       .send({})
       .expect(200);
+    await call('get', '/brands/' + id + '/reports/overview', owner).expect(403);
+    await call('get', '/brands/' + id + '/reports/overview', manager).expect(403);
   });
   for (const voucherType of ['DISCOUNT', 'PREPAID', 'COMBO'])
     it('rejects equal and higher prices for ' + voucherType, async () => {
       for (const salePrice of [50000, 60000])
-        await call('post', '/campaigns/brand/' + seed.brand._id, owner)
+        await call('post', '/campaigns/brand/' + seed.brand._id, manager)
           .send(
             campaignBody({
               voucherType,
@@ -221,46 +249,46 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
           .expect(400);
     });
   it('enforces expiry window, valid stores and merged prices when editing', async () => {
-    await call('post', '/campaigns/brand/' + seed.brand._id, owner)
+    await call('post', '/campaigns/brand/' + seed.brand._id, manager)
       .send(campaignBody({ voucherExpireAt: new Date(Date.now() + 2 * 86400000).toISOString() }))
       .expect(400);
-    await call('post', '/campaigns/brand/' + seed.brand._id, owner)
+    await call('post', '/campaigns/brand/' + seed.brand._id, manager)
       .send(campaignBody({ storeIds: [String(new Types.ObjectId())] }))
       .expect(400);
-    const c = await call('post', '/campaigns/brand/' + seed.brand._id, owner)
+    const c = await call('post', '/campaigns/brand/' + seed.brand._id, manager)
       .send(campaignBody())
       .expect(201);
-    await call('patch', '/campaigns/' + c.body.data.id, owner)
+    await call('patch', '/campaigns/' + c.body.data.id, manager)
       .send({ faceValue: 30000 })
       .expect(400);
-    await call('patch', '/campaigns/' + c.body.data.id, owner)
+    await call('patch', '/campaigns/' + c.body.data.id, manager)
       .send({ storeIds: null })
       .expect(400);
   });
   it('publishes approved campaigns to public catalog, pauses and requires reapproval after edits', async () => {
-    const c = await call('post', '/campaigns/brand/' + seed.brand._id, owner)
+    const c = await call('post', '/campaigns/brand/' + seed.brand._id, manager)
       .send(campaignBody())
       .expect(201);
     const id = c.body.data.id;
     await call('get', '/vouchers/' + id).expect(404);
-    await call('patch', '/campaigns/' + id + '/submit', owner)
+    await call('patch', '/campaigns/' + id + '/submit', manager)
       .send({})
       .expect(200);
-    await call('patch', '/campaigns/' + id + '/approve', owner)
+    await call('patch', '/campaigns/' + id + '/approve', manager)
       .send({})
       .expect(403);
     await call('patch', '/campaigns/' + id + '/approve', admin)
       .send({})
       .expect(200);
     await call('get', '/vouchers/' + id).expect(200);
-    await call('patch', '/campaigns/' + id + '/pause', owner)
+    await call('patch', '/campaigns/' + id + '/pause', manager)
       .send({})
       .expect(200);
     await call('get', '/vouchers/' + id).expect(404);
-    await call('patch', '/campaigns/' + id + '/resume', owner)
+    await call('patch', '/campaigns/' + id + '/resume', manager)
       .send({})
       .expect(200);
-    const updated = await call('patch', '/campaigns/' + id, owner)
+    const updated = await call('patch', '/campaigns/' + id, manager)
       .send({ title: 'Edited requires approval' })
       .expect(200);
     expect(updated.body.data.status).toBe('PENDING');
@@ -289,7 +317,11 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     );
     expect(results.map((r) => r.status)).toEqual([201, 201]);
     expect(await db.payments.countDocuments({ orderId: id })).toBe(1);
-    expect(await db.vouchers.countDocuments({ orderId: id })).toBe(2);
+    expect(await db.vouchers.countDocuments({ orderId: id })).toBe(1);
+    const bundle = await db.vouchers.findOne({ orderId: id });
+    expect(bundle!.usageLimit).toBe(2);
+    expect(bundle!.remainingUses).toBe(2);
+    expect(bundle!.totalPrice).toBe(60000);
     expect((await db.orders.findById(id))!.status).toBe('FULFILLED');
     await call('get', '/orders/' + id, customer).expect(404);
   });
@@ -360,6 +392,7 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
       .send({ voucherItemId: voucher.id })
       .expect(201);
     const payload = {
+      idempotencyKey: randomUUID(),
       storeId: String(seed.store._id),
       qrPayload: second.body.data.qrPayload,
       billAmount: 80000,
@@ -371,7 +404,9 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     await call('post', '/redeem', staff)
       .send({ ...payload, qrPayload: first.body.data.qrPayload })
       .expect(400);
-    const results = await Promise.all([1, 2].map(() => call('post', '/redeem', staff).send(payload)));
+    const results = await Promise.all(
+      [1, 2].map(() => call('post', '/redeem', staff).send({ ...payload, idempotencyKey: randomUUID() })),
+    );
     expect(results.map((r) => r.status).sort()).toEqual([201, 400]);
     expect(await db.redemptions.countDocuments({ voucherId: voucher.id })).toBe(1);
     expect((await db.vouchers.findById(voucher.id))!.status).toBe('USED');
@@ -389,13 +424,23 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
       .expect(201);
     await db.tokens.updateOne({ voucherId: voucher.id }, { $set: { expiresAt: new Date(0) } });
     await call('post', '/redeem', staff)
-      .send({ storeId: String(seed.store._id), otpCode: code.body.data.otpCode, billAmount: 100000 })
+      .send({
+        idempotencyKey: randomUUID(),
+        storeId: String(seed.store._id),
+        otpCode: code.body.data.otpCode,
+        billAmount: 100000,
+      })
       .expect(400);
     const fresh = await call('post', '/redeem/token', user.accessToken)
       .send({ voucherItemId: voucher.id })
       .expect(201);
     await call('post', '/redeem', staff)
-      .send({ storeId: String(seed.store._id), otpCode: fresh.body.data.otpCode, billAmount: 100000 })
+      .send({
+        idempotencyKey: randomUUID(),
+        storeId: String(seed.store._id),
+        otpCode: fresh.body.data.otpCode,
+        billAmount: 100000,
+      })
       .expect(201);
   });
   it('locks refund-pending vouchers; manual refund completes once and restores stock', async () => {
@@ -433,5 +478,263 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     const report = await call('get', '/admin/reports/overview', admin).expect(200);
     expect(report.body.data.grossRevenue).toBeGreaterThan(0);
     expect(report.body.data.netRevenue).toBe(report.body.data.grossRevenue - report.body.data.refundedAmount);
+  });
+  it('owner is read-only for brand operations and sees scoped statistics', async () => {
+    const id = String(seed.brand._id);
+    await call('get', '/brands/me', owner).expect(200);
+    const report = await call('get', '/brands/' + id + '/reports/overview', owner).expect(200);
+    expect(report.body.data.currency).toBe('VND');
+    expect(report.body.data.netRevenue).toBe(report.body.data.grossRevenue - report.body.data.refundedAmount);
+    expect(report.body.data.items).toBeUndefined();
+    await call('post', '/brands', owner)
+      .send({ name: 'Owner cannot create', ownerId: String(seed.owner._id) })
+      .expect(403);
+    await call('post', '/campaigns/brand/' + id, owner)
+      .send(campaignBody())
+      .expect(403);
+    await call('patch', '/campaigns/' + seed.campaigns[0]._id, owner)
+      .send({ title: 'Forbidden' })
+      .expect(403);
+    await call('post', '/brands/' + id + '/stores', owner)
+      .send({ name: 'Forbidden', address: 'Forbidden', latitude: 10, longitude: 106 })
+      .expect(403);
+    await call('post', '/brands/' + id + '/staff', owner)
+      .send({})
+      .expect(403);
+    await call('get', '/admin/reports/overview', owner).expect(403);
+  });
+  it('all five roles can buy and receive a private wallet without changing role', async () => {
+    const login = await call('post', '/auth/login')
+      .send({ email: 'customer@voucher.local', password: 'Voucher@123' })
+      .expect(201);
+    for (const token of [admin, owner, manager, staff, login.body.data.accessToken]) {
+      const order = await checkout(token, String(seed.campaigns[1]._id)).expect(201);
+      await call('post', '/orders/' + order.body.data.id + '/simulate-payment', token)
+        .send({})
+        .expect(201);
+      const wallet = await call('get', '/wallet', token).expect(200);
+      expect(wallet.body.data.some((v: { orderId: string }) => v.orderId === order.body.data.id)).toBe(true);
+    }
+    const otp = await call('post', '/auth/otp/request').send({ email: 'staff@voucher.local' }).expect(201);
+    const verified = await call('post', '/auth/otp/verify')
+      .send({ email: 'staff@voucher.local', code: codes.get('staff@voucher.local') })
+      .expect(201);
+    expect(verified.body.data.user.role).toBe('STORE_STAFF');
+  });
+  it('buying five tickets produces one voucher; the same QR allows exactly five confirmed uses', async () => {
+    const user = await newCustomer();
+    const order = await checkout(user.accessToken, undefined, 5).expect(201);
+    const id = order.body.data.id;
+    await call('post', '/orders/' + id + '/simulate-payment', user.accessToken)
+      .send({})
+      .expect(201);
+    expect(await db.vouchers.countDocuments({ orderId: id })).toBe(1);
+    const voucher = await db.vouchers.findOne({ orderId: id });
+    const code = await call('post', '/redeem/token', user.accessToken)
+      .send({ voucherItemId: String(voucher!._id) })
+      .expect(201);
+    const payload = {
+      storeId: String(seed.store._id),
+      qrPayload: code.body.data.qrPayload,
+      billAmount: 100000,
+    };
+    for (let use = 1; use <= 5; use++) {
+      const result = await call('post', '/redeem', staff)
+        .send({ ...payload, idempotencyKey: randomUUID() })
+        .expect(201);
+      expect(result.body.data.remainingUses).toBe(5 - use);
+      expect(result.body.data.redemption.sequence).toBe(use);
+      expect(result.body.data.voucher.status).toBe(use === 5 ? 'USED' : 'ACTIVE');
+      if (use === 1)
+        await call('post', '/refunds', user.accessToken)
+          .send({ voucherItemId: String(voucher!._id), reason: 'Cannot refund partially used bundle' })
+          .expect(400);
+    }
+    await call('post', '/redeem', staff)
+      .send({ ...payload, idempotencyKey: randomUUID() })
+      .expect(400);
+    expect(await db.redemptions.countDocuments({ voucherId: voucher!._id })).toBe(5);
+    const detail = await call('get', '/wallet/' + voucher!._id, user.accessToken).expect(200);
+    expect(detail.body.data.redemptions).toHaveLength(5);
+  });
+  it('retrying one redemption key concurrently consumes one use and rejects a changed payload', async () => {
+    const user = await newCustomer();
+    const order = await checkout(user.accessToken, undefined, 2).expect(201);
+    await call('post', '/orders/' + order.body.data.id + '/simulate-payment', user.accessToken)
+      .send({})
+      .expect(201);
+    const voucher = await db.vouchers.findOne({ orderId: order.body.data.id });
+    const code = await call('post', '/redeem/token', user.accessToken)
+      .send({ voucherItemId: String(voucher!._id) })
+      .expect(201);
+    const payload = {
+      idempotencyKey: randomUUID(),
+      storeId: String(seed.store._id),
+      qrPayload: code.body.data.qrPayload,
+      billAmount: 100000,
+    };
+    const results = await Promise.all([1, 2, 3].map(() => call('post', '/redeem', staff).send(payload)));
+    expect(results.map((v) => v.status)).toEqual([201, 201, 201]);
+    expect((await db.vouchers.findById(voucher!._id))!.remainingUses).toBe(1);
+    expect(await db.redemptions.countDocuments({ voucherId: voucher!._id })).toBe(1);
+    await call('post', '/redeem', staff)
+      .send({ ...payload, billAmount: 110000 })
+      .expect(400);
+  });
+  it('parallel distinct scans never exceed the purchased usage count', async () => {
+    const user = await newCustomer();
+    const order = await checkout(user.accessToken, undefined, 5).expect(201);
+    await call('post', '/orders/' + order.body.data.id + '/simulate-payment', user.accessToken)
+      .send({})
+      .expect(201);
+    const voucher = await db.vouchers.findOne({ orderId: order.body.data.id });
+    const code = await call('post', '/redeem/token', user.accessToken)
+      .send({ voucherItemId: String(voucher!._id) })
+      .expect(201);
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        call('post', '/redeem', staff).send({
+          idempotencyKey: randomUUID(),
+          storeId: String(seed.store._id),
+          otpCode: code.body.data.otpCode,
+          billAmount: 100000,
+        }),
+      ),
+    );
+    expect(results.filter((v) => v.status === 201)).toHaveLength(5);
+    expect(results.filter((v) => v.status === 400)).toHaveLength(3);
+    expect((await db.vouchers.findById(voucher!._id))!.remainingUses).toBe(0);
+    expect(await db.redemptions.countDocuments({ voucherId: voucher!._id })).toBe(5);
+  });
+  it('staff can buy but cannot redeem their own voucher; another assigned staff can', async () => {
+    const order = await checkout(staff, String(seed.campaigns[2]._id)).expect(201);
+    await call('post', '/orders/' + order.body.data.id + '/simulate-payment', staff)
+      .send({})
+      .expect(201);
+    const voucher = await db.vouchers.findOne({ orderId: order.body.data.id });
+    const code = await call('post', '/redeem/token', staff)
+      .send({ voucherItemId: String(voucher!._id) })
+      .expect(201);
+    const payload = {
+      idempotencyKey: randomUUID(),
+      storeId: String(seed.store._id),
+      qrPayload: code.body.data.qrPayload,
+      billAmount: 100000,
+    };
+    await call('post', '/redeem', staff).send(payload).expect(403);
+    await call('post', '/admin/users', admin)
+      .send({
+        email: 'staff2@example.com',
+        fullName: 'Staff Two',
+        password: 'Voucher@123',
+        role: 'STORE_STAFF',
+        storeIds: [String(seed.store._id)],
+      })
+      .expect(201);
+    const login = await call('post', '/auth/login')
+      .send({ email: 'staff2@example.com', password: 'Voucher@123' })
+      .expect(201);
+    const token = login.body.data.accessToken;
+    await call('post', '/auth/select-store', token)
+      .send({ storeId: String(seed.store._id) })
+      .expect(201);
+    await call('post', '/redeem', token)
+      .send({ ...payload, idempotencyKey: randomUUID() })
+      .expect(201);
+  });
+  it('refunds the full unused bundle amount and all reserved purchase quota', async () => {
+    const user = await newCustomer();
+    const order = await checkout(user.accessToken, undefined, 5).expect(201);
+    await call('post', '/orders/' + order.body.data.id + '/simulate-payment', user.accessToken)
+      .send({})
+      .expect(201);
+    const voucher = await db.vouchers.findOne({ orderId: order.body.data.id });
+    const refund = await call('post', '/refunds', user.accessToken)
+      .send({ voucherItemId: String(voucher!._id), reason: 'Full unused bundle refund' })
+      .expect(201);
+    expect(refund.body.data.amount).toBe(150000);
+    await call('patch', '/refunds/' + refund.body.data.id + '/confirm-manual', admin)
+      .send({ reference: 'BUNDLE-REFUND' })
+      .expect(200);
+    expect((await db.vouchers.findById(voucher!._id))!.remainingUses).toBe(0);
+    expect(
+      (await db.quotas.findOne({ userId: user.user.id, campaignId: seed.campaigns[0]._id }))!.purchased,
+    ).toBe(0);
+    await checkout(user.accessToken, undefined, 5).expect(201);
+  });
+  it('admin enforces manager/staff assignments, revokes sessions on scope changes and blocks self-demotion', async () => {
+    await call('post', '/admin/users', admin)
+      .send({
+        email: 'invalid-manager@example.com',
+        fullName: 'Invalid',
+        password: 'Voucher@123',
+        role: 'BRAND_MANAGER',
+      })
+      .expect(400);
+    await call('post', '/admin/users', admin)
+      .send({
+        email: 'invalid-staff@example.com',
+        fullName: 'Invalid',
+        password: 'Voucher@123',
+        role: 'STORE_STAFF',
+        storeIds: [String(new Types.ObjectId())],
+      })
+      .expect(400);
+    await call('post', '/admin/users', staff).send({}).expect(403);
+    await call('patch', '/admin/users/' + seed.admin._id, admin)
+      .send({ role: 'CUSTOMER' })
+      .expect(400);
+    const created = await call('post', '/admin/users', admin)
+      .send({
+        email: 'revoke@example.com',
+        fullName: 'Revoke',
+        password: 'Voucher@123',
+        role: 'BRAND_MANAGER',
+        brandIds: [String(seed.brand._id)],
+      })
+      .expect(201);
+    const login = await call('post', '/auth/login')
+      .send({ email: 'revoke@example.com', password: 'Voucher@123' })
+      .expect(201);
+    await call('patch', '/admin/users/' + created.body.data.id, admin)
+      .send({ active: false })
+      .expect(200);
+    await call('get', '/brands/me', login.body.data.accessToken).expect(401);
+    await call('post', '/auth/otp/request').send({ email: 'revoke@example.com' }).expect(400);
+  });
+  it('legacy single-use vouchers backfill repeatably without deleting records', async () => {
+    const user = await newCustomer();
+    const order = await checkout(user.accessToken).expect(201);
+    await call('post', '/orders/' + order.body.data.id + '/simulate-payment', user.accessToken)
+      .send({})
+      .expect(201);
+    const voucher = await db.vouchers.findOne({ orderId: order.body.data.id });
+    await db.vouchers.collection.updateOne(
+      { _id: voucher!._id },
+      { $unset: { usageLimit: '', usedCount: '', remainingUses: '', totalPrice: '', formatVersion: '' } },
+    );
+    await db.onModuleInit();
+    await db.onModuleInit();
+    const legacy = await db.vouchers.findById(voucher!._id);
+    expect(legacy!.formatVersion).toBe(1);
+    expect(legacy!.usageLimit).toBe(1);
+    expect(legacy!.remainingUses).toBe(1);
+    expect(legacy!.totalPrice).toBe(30000);
+    const indexes = await db.redemptions.collection.listIndexes().toArray();
+    expect(indexes.some((i) => i.unique && Object.keys(i.key).length === 1 && i.key.voucherId === 1)).toBe(
+      false,
+    );
+    const token = await call('post', '/redeem/token', user.accessToken)
+      .send({ voucherItemId: String(voucher!._id) })
+      .expect(201);
+    await call('post', '/redeem', staff)
+      .send({
+        idempotencyKey: randomUUID(),
+        storeId: String(seed.store._id),
+        qrPayload: token.body.data.qrPayload,
+        billAmount: 100000,
+      })
+      .expect(201);
+    expect((await db.vouchers.findById(voucher!._id))!.status).toBe('USED');
   });
 });

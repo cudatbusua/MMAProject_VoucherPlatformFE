@@ -39,15 +39,17 @@ MongoDB hiện đã được cài binary riêng trong `.cache/mongodb`; dữ li�
 
 ## Tài khoản mẫu
 
-Đã seed ba tài khoản, mật khẩu local chung **`Voucher@123`** (giá trị `SEED_PASSWORD` trong `.env`):
+Đã seed năm tài khoản, mật khẩu local chung **`Voucher@123`** (giá trị `SEED_PASSWORD` trong `.env`):
 
 | Email | Vai trò |
 |---|---|
 | admin@voucher.local | ADMIN |
-| owner@voucher.local | BRAND_OWNER |
-| staff@voucher.local | STORE_STAFF |
+| owner@voucher.local | BRAND_OWNER — chỉ xem số liệu thương hiệu |
+| manager@voucher.local | BRAND_MANAGER — tạo và vận hành chiến dịch |
+| staff@voucher.local | STORE_STAFF — quét vé và mua vé cá nhân |
+| customer@voucher.local | CUSTOMER |
 
-Khách hàng dùng email + OTP, không dùng mật khẩu. Mặc định `MAIL_PROVIDER=local`: OTP xuất hiện trong terminal BE, **không gửi email thật**. API không trả OTP trong response. Muốn gửi email thật: đặt `MAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `MAIL_FROM_EMAIL` là sender đã xác thực rồi khởi động lại BE. Không đưa khóa vào GitHub.
+Người mua có thể dùng email + OTP; email đã có tài khoản giữ nguyên role, email mới tạo CUSTOMER. Tài khoản mẫu cũng đăng nhập được bằng mật khẩu để test. Owner chỉ đọc số liệu trong nghiệp vụ thương hiệu; mọi role vẫn được mua và quản lý ví cá nhân. Mặc định `MAIL_PROVIDER=local`: OTP xuất hiện trong terminal BE, **không gửi email thật**. API không trả OTP trong response. Muốn gửi email thật: đặt `MAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `MAIL_FROM_EMAIL` là sender đã xác thực rồi khởi động lại BE. Không đưa khóa vào GitHub.
 
 Seed có 1 thương hiệu, 2 cửa hàng với tọa độ mẫu TP.HCM và 7 chiến dịch giá 30K–100K. Đây là dữ liệu giả để kiểm thử, không phải cửa hàng đã được xác minh. Chạy lại seed bằng `npm.cmd run db:seed`; chỉ thêm bản ghi chưa có, không ghi đè dữ liệu đã sửa.
 
@@ -71,15 +73,15 @@ MongoDB Atlas cũng dùng được: đổi `MONGODB_URI` sang URI của cluster 
 
 ## Chức năng đã triển khai
 
-- JWT + refresh token luân phiên + logout thu hồi phiên; phân quyền 4 vai trò.
+- JWT + refresh token luân phiên + logout thu hồi phiên; phân quyền 5 vai trò (ADMIN, BRAND_OWNER, BRAND_MANAGER, STORE_STAFF, CUSTOMER).
 - Đăng nhập khách hàng OTP, tự tạo CUSTOMER lần đầu; giới hạn gửi lại, số lần nhập và thời hạn mã.
-- Admin tạo chủ thương hiệu; chủ thương hiệu tạo cửa hàng và nhân viên.
+- Admin tạo tài khoản, gán owner/thương hiệu cho manager; manager tạo cửa hàng, nhân viên và chiến dịch. Owner chỉ xem số liệu/doanh thu thuộc thương hiệu của mình.
 - Duyệt thương hiệu, đình chỉ/khôi phục; chiến dịch nháp → chờ duyệt → được duyệt/mở bán, tạm dừng và duyệt lại sau chỉnh sửa.
 - Ba loại voucher DISCOUNT/PREPAID/COMBO, kiểm tra giá và thời gian, cửa hàng áp dụng.
 - Danh mục, tìm kiếm, sắp xếp, phân trang, lọc khoảng cách bằng GeoJSON/2dsphere.
 - Đơn hàng cho từng loại voucher, giữ chỗ 15 phút, giới hạn mua, hủy/đơn hết hạn trả tồn kho.
-- Thanh toán **DEMO**, xác nhận lặp không cấp trùng; ví chỉ có voucher đã thanh toán.
-- Sinh QR payload/OTP dùng voucher có hiệu lực 60 giây; chọn cửa hàng làm việc; chỉ sử dụng thành công một lần.
+- Thanh toán **DEMO**, xác nhận lặp không cấp trùng; ví chỉ có voucher đã thanh toán. Mỗi đơn nhận một voucher với số lượt bằng số vé, không cấp từng voucher riêng.
+- Sinh QR payload/OTP dùng voucher có hiệu lực 60 giây; chọn cửa hàng làm việc; mỗi xác nhận hợp lệ trừ một lượt, QR có thể dùng nhiều lần tới khi hết lượt; retry cùng idempotencyKey không trừ thêm. Staff không tự quét voucher của mình.
 - Yêu cầu hoàn voucher, khóa khi đang hoàn, admin xác nhận/từ chối thủ công; báo cáo doanh thu và lịch sử quét.
 
 ## Phạm vi bản hiện tại
@@ -101,4 +103,4 @@ Test chức năng khởi chạy replica set tạm riêng rồi xóa database tes
 
 Các file cấu hình mẫu, mã nguồn và `package-lock.json` có thể đưa lên GitHub. `.env`, dữ liệu `.data`, binary `.cache`, `node_modules` và `dist` đã nằm trong `.gitignore`. Repository: [MMAProject_VoucherPlatformFE](https://github.com/cudatbusua/MMAProject_VoucherPlatformFE). Khung hiện gồm backend, web và mobile trong cùng repo.
 
-Xem [kịch bản Swagger](docs/demo-api.md), [thiết kế database](docs/database.md), [quy tắc nghiệp vụ](docs/business-rules.md).
+Xem [kịch bản Swagger](docs/demo-api.md), [thiết kế database](docs/database.md), [quy tắc nghiệp vụ](docs/business-rules.md), [phân quyền và voucher nhiều lượt](docs/permissions-and-multi-use.md).

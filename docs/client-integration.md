@@ -16,3 +16,16 @@
 - Swagger đang chạy là hợp đồng thực tế. FE/mobile cũ không tự tương thích với backend mới.
 
 Xem [demo API](demo-api.md) và [nghiệp vụ](business-rules.md).
+
+## API nhiều lượt và vai trò mới
+
+- BRAND_OWNER chỉ xem báo cáo GET /api/brands/:id/reports/overview của mình; BRAND_MANAGER có brandIds mới tạo/sửa/gửi duyệt chiến dịch.
+- Admin POST /api/admin/users tạo tài khoản với role và brandIds (manager) hoặc storeIds (staff). PATCH /api/admin/users/:id đổi quyền/phạm vi/khóa tài khoản và thu hồi phiên.
+- Các API orders/wallet/refunds của bản thân và redeem/token mở cho mọi role đang hoạt động.
+- Sau thanh toán mỗi đơn nhận một voucher: usageLimit=quantity, usedCount=0, remainingUses=quantity, totalPrice=totalAmount.
+- Chi tiết ví trả redemptions (mảng), không còn redemption đơn lẻ.
+- POST /api/redeem bắt buộc idempotencyKey UUID v4. Một lần người dùng bấm xác nhận = một key; khi timeout/retry phải dùng lại key. Camera phải dừng sau khi nhận QR và chờ xác nhận, không tạo key mới cho từng frame.
+- Cùng QR/OTP còn hạn có thể xác nhận nhiều lần; mỗi lần một vé. Hết 60 giây, người mua làm mới mã trên cùng voucher; số lượt không thay đổi.
+- Render rõ còn X/Y lượt, không đánh dấu USED sau lần đầu nếu còn lượt.
+- Staff có thể mua nhưng phải nhờ staff khác xác nhận voucher của mình.
+- Hoàn toàn bộ gói chưa dùng lượt nào; số tiền là totalPrice. Chưa hỗ trợ hoàn phần còn lại của gói đã dùng.

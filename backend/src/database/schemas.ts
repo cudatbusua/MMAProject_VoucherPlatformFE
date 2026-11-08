@@ -3,6 +3,7 @@ import { Schema, Types } from 'mongoose';
 export enum Role {
   ADMIN = 'ADMIN',
   BRAND_OWNER = 'BRAND_OWNER',
+  BRAND_MANAGER = 'BRAND_MANAGER',
   STORE_STAFF = 'STORE_STAFF',
   CUSTOMER = 'CUSTOMER',
 }
@@ -31,6 +32,7 @@ export interface User extends Base {
   active: boolean;
   passwordHash?: string;
   storeIds: Types.ObjectId[];
+  brandIds: Types.ObjectId[];
 }
 export interface Session extends Base {
   userId: Types.ObjectId;
@@ -128,6 +130,11 @@ export interface Voucher extends Base {
   campaignId: Types.ObjectId;
   orderId: Types.ObjectId;
   itemIndex: number;
+  formatVersion: number;
+  usageLimit: number;
+  usedCount: number;
+  remainingUses: number;
+  totalPrice: number;
   title: string;
   brandId: Types.ObjectId;
   storeIds: Types.ObjectId[];
@@ -151,6 +158,10 @@ export interface RedeemToken extends Base {
   used: boolean;
 }
 export interface Redemption extends Base {
+  sequence: number;
+  remainingAfter: number;
+  idempotencyKey?: string;
+  requestHash?: string;
   voucherId: Types.ObjectId;
   staffId: Types.ObjectId;
   storeId: Types.ObjectId;
@@ -190,6 +201,7 @@ const options = {
       delete result.hash;
       delete result.tokenHash;
       delete result.otpHash;
+      delete result.requestHash;
       return result;
     },
   },
@@ -203,6 +215,7 @@ export const UserSchema = new Schema<User>(
     active: { type: Boolean, default: true },
     passwordHash: { type: String, select: false },
     storeIds: [ref('Store')],
+    brandIds: [ref('Brand')],
   },
   options,
 );
@@ -322,7 +335,12 @@ export const VoucherSchema = new Schema<Voucher>(
     customerId: ref('User'),
     campaignId: ref('Campaign'),
     orderId: ref('Order'),
-    itemIndex: { type: Number, required: true },
+    itemIndex: { type: Number, default: 0, required: true },
+    formatVersion: { type: Number, default: 2 },
+    usageLimit: { ...positive, default: 1 },
+    usedCount: counter,
+    remainingUses: { ...counter, default: 1 },
+    totalPrice: positive,
     title: String,
     brandId: ref('Brand'),
     storeIds: [ref('Store')],
@@ -344,6 +362,7 @@ export const VoucherSchema = new Schema<Voucher>(
   options,
 );
 VoucherSchema.index({ orderId: 1, itemIndex: 1 }, { unique: true });
+VoucherSchema.index({ orderId: 1 }, { unique: true, partialFilterExpression: { formatVersion: 2 } });
 VoucherSchema.index({ customerId: 1, status: 1, createdAt: -1 });
 export const RedeemTokenSchema = new Schema<RedeemToken>(
   {
@@ -361,7 +380,11 @@ RedeemTokenSchema.index({ otpHash: 1 }, { unique: true });
 RedeemTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 export const RedemptionSchema = new Schema<Redemption>(
   {
-    voucherId: { ...ref('Voucher'), unique: true },
+    voucherId: ref('Voucher'),
+    sequence: positive,
+    remainingAfter: { type: Number, min: 0, required: true },
+    idempotencyKey: String,
+    requestHash: { type: String, select: false },
     staffId: ref('User'),
     storeId: ref('Store'),
     billAmount: { type: Number, min: 0, required: true },
@@ -369,6 +392,11 @@ export const RedemptionSchema = new Schema<Redemption>(
     method: { type: String, enum: ['QR', 'OTP'], required: true },
   },
   options,
+);
+RedemptionSchema.index({ voucherId: 1, sequence: 1 }, { unique: true });
+RedemptionSchema.index(
+  { staffId: 1, idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } },
 );
 export const RefundSchema = new Schema<Refund>(
   {

@@ -62,6 +62,24 @@ export async function seedData(db: Database, password: string) {
     },
     { upsert: true, returnDocument: 'after' },
   );
+  const manager = await db.users.findOneAndUpdate(
+    { email: 'manager@voucher.local' },
+    {
+      $setOnInsert: {
+        fullName: 'Quản lý thương hiệu',
+        role: Role.BRAND_MANAGER,
+        active: true,
+        passwordHash: hash,
+        brandIds: [brand._id],
+      },
+    },
+    { upsert: true, returnDocument: 'after' },
+  );
+  const customer = await db.users.findOneAndUpdate(
+    { email: 'customer@voucher.local' },
+    { $setOnInsert: { fullName: 'Khách hàng mẫu', role: Role.CUSTOMER, active: true, passwordHash: hash } },
+    { upsert: true, returnDocument: 'after' },
+  );
   const definitions = [
     { title: 'Voucher cà phê 50K', voucherType: VoucherType.PREPAID, salePrice: 30000, faceValue: 50000 },
     { title: 'Voucher đồ uống 70K', voucherType: VoucherType.PREPAID, salePrice: 45000, faceValue: 70000 },
@@ -122,5 +140,5 @@ export async function seedData(db: Database, password: string) {
       ),
     );
   }
-  return { admin, owner, staff, brand, store, secondStore, campaigns };
+  return { admin, owner, manager, staff, customer, brand, store, secondStore, campaigns };
 }
