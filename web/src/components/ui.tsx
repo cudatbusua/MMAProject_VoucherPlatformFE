@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { Tone } from './format';
 
 export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: ReactNode }) {
@@ -51,6 +52,8 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
+const modalStack: symbol[] = [];
+
 export function Modal({
   title,
   onClose,
@@ -62,14 +65,39 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const id = useRef(Symbol('modal'));
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    closeRef.current = onClose;
+  });
+  useEffect(() => {
+    const me = id.current;
+    modalStack.push(me);
+    // Move focus into the dialog unless a field inside already took it (autoFocus).
+    if (!dialogRef.current?.contains(document.activeElement)) dialogRef.current?.focus();
+    // Only the top-most modal reacts to Escape, so nested dialogs close one at a time.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && modalStack[modalStack.length - 1] === me) closeRef.current();
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return (
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      modalStack.splice(modalStack.indexOf(me), 1);
+    };
+  }, []);
+  // Portal to <body>: a dialog opened later is always painted above earlier ones, wherever it sits in JSX.
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={'modal' + (wide ? ' modal-wide' : '')} role="dialog" aria-modal="true">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className={'modal' + (wide ? ' modal-wide' : '')}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        style={{ outline: 'none' }}
+      >
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Đóng">
@@ -78,7 +106,8 @@ export function Modal({
         </div>
         <div className="modal-body">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -13,7 +13,11 @@ import { ManagerCampaignsPage } from './features/manager/CampaignsPage';
 import { ManagerDashboard } from './features/manager/Dashboard';
 import { StaffAccountsPage } from './features/manager/StaffPage';
 import { StoresPage } from './features/manager/StoresPage';
+import { DocumentsPage } from './features/owner/DocumentsPage';
 import { OwnerReportPage } from './features/owner/ReportPage';
+import { MyOrdersPage } from './features/staff/MyOrdersPage';
+import { MyWalletPage } from './features/staff/MyWalletPage';
+import { ShopPage } from './features/staff/ShopPage';
 import { StaffHistoryPage } from './features/staff/HistoryPage';
 import { RedeemPage } from './features/staff/RedeemPage';
 import { AuthProvider, useAuth } from './services/auth';
@@ -43,6 +47,7 @@ function AppRoutes() {
         <Route path="/admin/audit" element={<Guard role="ADMIN"><AuditPage /></Guard>} />
 
         <Route path="/owner" element={<Guard role="BRAND_OWNER"><OwnerReportPage /></Guard>} />
+        <Route path="/owner/documents" element={<Guard role="BRAND_OWNER"><DocumentsPage /></Guard>} />
 
         <Route path="/manager" element={<Guard role="BRAND_MANAGER"><ManagerDashboard /></Guard>} />
         <Route path="/manager/campaigns" element={<Guard role="BRAND_MANAGER"><ManagerCampaignsPage /></Guard>} />
@@ -51,6 +56,9 @@ function AppRoutes() {
 
         <Route path="/staff" element={<Guard role="STORE_STAFF"><RedeemPage /></Guard>} />
         <Route path="/staff/history" element={<Guard role="STORE_STAFF"><StaffHistoryPage /></Guard>} />
+        <Route path="/staff/shop" element={<Guard role="STORE_STAFF"><ShopPage /></Guard>} />
+        <Route path="/staff/orders" element={<Guard role="STORE_STAFF"><MyOrdersPage /></Guard>} />
+        <Route path="/staff/wallet" element={<Guard role="STORE_STAFF"><MyWalletPage /></Guard>} />
       </Route>
       <Route path="*" element={<Navigate to={user ? homeFor(user.role) : '/login'} replace />} />
     </Routes>

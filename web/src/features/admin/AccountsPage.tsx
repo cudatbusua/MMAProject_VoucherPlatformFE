@@ -84,7 +84,11 @@ export function AccountsPage() {
                   <td>{roleLabel[u.role]}</td>
                   <td className="small">
                     {u.role === 'BRAND_MANAGER' ? u.brandIds.map(brandName).join(', ') : null}
-                    {u.role === 'STORE_STAFF' ? u.storeIds.map(storeName).join(', ') : null}
+                    {u.role === 'STORE_STAFF' ? (
+                      <>
+                        {u.employeeCode ? <span className="mono">{u.employeeCode}</span> : null} {u.storeIds.map(storeName).join(', ')}
+                      </>
+                    ) : null}
                     {u.role !== 'BRAND_MANAGER' && u.role !== 'STORE_STAFF' ? <span className="muted">—</span> : null}
                   </td>
                   <td>{u.active ? <Badge tone="success">Hoạt động</Badge> : <Badge tone="danger">Đã khóa</Badge>}</td>

@@ -17,7 +17,7 @@ export function StaffAccountsPage() {
     <div className="stack">
       <PageHeader
         title="Nhân viên cửa hàng"
-        subtitle="Nhân viên đăng nhập web bằng email/mật khẩu, chọn cửa hàng làm việc rồi xác nhận voucher. Đổi phân công/khóa tài khoản do quản trị viên thực hiện."
+        subtitle="Nhân viên đăng nhập web, chọn cửa hàng làm việc rồi xác nhận voucher. Mỗi nhân viên có mã nhân viên riêng để mua voucher của thương hiệu với giá ưu đãi. Đổi phân công/khóa tài khoản do quản trị viên thực hiện."
         actions={
           <>
             <BrandPicker state={state} />
@@ -32,12 +32,13 @@ export function StaffAccountsPage() {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Nhân viên</th><th>Cửa hàng</th><th>Trạng thái</th><th>Tạo lúc</th></tr>
+                <tr><th>Nhân viên</th><th>Mã nhân viên</th><th>Cửa hàng</th><th>Trạng thái</th><th>Tạo lúc</th></tr>
               </thead>
               <tbody>
                 {staff.data.map((u) => (
                   <tr key={u.id}>
                     <td><strong>{u.fullName}</strong><div className="sub">{u.email}</div></td>
+                    <td>{u.employeeCode ? <span className="mono">{u.employeeCode}</span> : <span className="muted">—</span>}</td>
                     <td className="small">{u.storeIds.map(storeName).filter(Boolean).join(', ') || '—'}</td>
                     <td>{u.active ? <Badge tone="success">Hoạt động</Badge> : <Badge tone="danger">Đã khóa</Badge>}</td>
                     <td className="small muted">{dateTime(u.createdAt)}</td>

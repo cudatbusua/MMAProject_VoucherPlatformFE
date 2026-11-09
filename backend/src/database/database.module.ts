@@ -54,6 +54,12 @@ export class Database implements OnModuleInit {
     }
     // Transactions never race initial collection/index creation.
     for (const model of Object.values(this.connection.models)) await model.init();
+    // Staff created before employee codes existed get one now (idempotent).
+    const { ensureEmployeeCode } = await import('../auth/employee-code');
+    const missing = await this.users
+      .find({ role: S.Role.STORE_STAFF, employeeCode: { $exists: false } })
+      .limit(1000);
+    for (const u of missing) await ensureEmployeeCode(this, String(u._id));
   }
 }
 

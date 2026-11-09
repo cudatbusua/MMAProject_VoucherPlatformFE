@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
-import { fromLocalInput, toLocalInput, typeLabel } from '../../components/format';
+import type { FormEvent, ReactNode } from 'react';
+import { fromLocalInput, money, toLocalInput, typeLabel } from '../../components/format';
+import {
+  MAX_STAFF_DISCOUNT_PERCENT,
+  minSalePrice,
+  priceErrors,
+  staffUnitPrice,
+} from '../../components/priceRules';
 import { Alert, Field, Modal, useAction } from '../../components/ui';
 import { api } from '../../services/api';
 import type { Campaign, CampaignInput, Store, VoucherType } from '../../types';
@@ -8,7 +14,8 @@ import type { Campaign, CampaignInput, Store, VoucherType } from '../../types';
 const DAY = 86400000;
 
 function defaults(): Record<string, string> {
-  const start = new Date(Date.now() + 5 * 60000);
+  // Starts now (minute precision) so an approved campaign is on sale immediately; editable for scheduling.
+  const start = new Date(Math.floor(Date.now() / 60000) * 60000);
   const end = new Date(start.getTime() + 30 * DAY);
   const expire = new Date(end.getTime() + 30 * DAY);
   return {
@@ -16,6 +23,16 @@ function defaults(): Record<string, string> {
     saleEndAt: toLocalInput(end.toISOString()),
     voucherExpireAt: toLocalInput(expire.toISOString()),
   };
+}
+
+const FieldError = ({ text }: { text?: string }) => (text ? <span className="field-error">{text}</span> : null);
+function PriceField({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) {
+  return (
+    <Field label={label} hint={error ? undefined : hint}>
+      {children}
+      <FieldError text={error} />
+    </Field>
+  );
 }
 
 export function CampaignForm({
@@ -46,34 +63,64 @@ export function CampaignForm({
   const [comboItems, setComboItems] = useState(campaign?.comboItems ?? '');
   const [totalQuantity, setTotalQuantity] = useState(String(campaign?.totalQuantity ?? '100'));
   const [limitPerUser, setLimitPerUser] = useState(String(campaign?.limitPerUser ?? '5'));
+  const [staffPct, setStaffPct] = useState(String(campaign?.staffDiscountPercent ?? '0'));
   const [saleStartAt, setSaleStartAt] = useState(campaign ? toLocalInput(campaign.saleStartAt) : init.saleStartAt);
   const [saleEndAt, setSaleEndAt] = useState(campaign ? toLocalInput(campaign.saleEndAt) : init.saleEndAt);
   const [voucherExpireAt, setVoucherExpireAt] = useState(
     campaign ? toLocalInput(campaign.voucherExpireAt) : init.voucherExpireAt,
   );
   const [storeIds, setStoreIds] = useState<string[]>(campaign?.storeIds ?? stores.filter((s) => s.active).map((s) => s.id));
+  const [submitted, setSubmitted] = useState(!!campaign);
   const { busy, error, setError, run } = useAction();
   const live = campaign && ['APPROVED', 'PUBLISHED', 'PAUSED'].includes(campaign.status);
+  const sold = campaign ? campaign.soldQuantity + campaign.reservedQuantity > 0 : false;
+
+  const n = (v: string) => (v.trim() === '' ? NaN : Number(v));
+  const isDiscount = voucherType === 'DISCOUNT';
+  // DISCOUNT value is derived: amount off, or the cap for percentage discounts.
+  const effectiveFace = isDiscount ? (discountType === 'AMOUNT' ? n(discountValue) : n(maxDiscount)) : n(faceValue);
+  const prices = {
+    voucherType,
+    salePrice: n(salePrice),
+    faceValue: effectiveFace,
+    discountType,
+    discountValue: n(discountValue),
+    maxDiscount: n(maxDiscount),
+    staffDiscountPercent: n(staffPct || '0'),
+  };
+  const errors = priceErrors(prices);
+  const raw: Record<keyof typeof errors, string> = {
+    voucherType: voucherType,
+    salePrice,
+    faceValue: isDiscount ? (discountType === 'AMOUNT' ? discountValue : maxDiscount) : faceValue,
+    discountType,
+    discountValue,
+    maxDiscount,
+    staffDiscountPercent: staffPct,
+  };
+  // Errors appear for fields the user already filled, and for all fields after a save attempt.
+  const show = (k: keyof typeof errors) => (submitted || raw[k].trim() !== '' ? errors[k] : undefined);
+  const staffPrice =
+    !errors.salePrice && prices.staffDiscountPercent > 0 ? staffUnitPrice(prices.salePrice, prices.staffDiscountPercent) : null;
 
   function build(): CampaignInput | string {
-    const n = (v: string) => Number(v);
-    const sale = n(salePrice);
-    const face = n(faceValue);
-    if (!Number.isInteger(sale) || !Number.isInteger(face) || sale <= 0 || sale >= face)
-      return 'Giá bán phải là số nguyên dương và nhỏ hơn giá trị voucher.';
+    const firstError = Object.values(errors)[0];
+    if (firstError) return 'Kiểm tra lại giá: ' + firstError;
     const start = new Date(saleStartAt).getTime();
     const end = new Date(saleEndAt).getTime();
     const exp = new Date(voucherExpireAt).getTime();
     if (!(start < end)) return 'Thời gian bắt đầu bán phải trước thời gian kết thúc.';
     if (exp < end + 10 * DAY) return 'Hạn sử dụng phải sau ngày kết thúc bán ít nhất 10 ngày.';
     if (!storeIds.length) return 'Chọn ít nhất một cửa hàng áp dụng.';
+    if (voucherType === 'COMBO' && !comboItems.trim()) return 'Combo cần nội dung gói.';
     const dto: CampaignInput = {
       title: title.trim(),
       voucherType,
-      salePrice: sale,
-      faceValue: face,
-      totalQuantity: n(totalQuantity),
-      limitPerUser: n(limitPerUser),
+      salePrice: prices.salePrice,
+      faceValue: effectiveFace,
+      totalQuantity: Number(totalQuantity),
+      limitPerUser: Number(limitPerUser),
+      staffDiscountPercent: prices.staffDiscountPercent,
       saleStartAt: fromLocalInput(saleStartAt),
       saleEndAt: fromLocalInput(saleEndAt),
       voucherExpireAt: fromLocalInput(voucherExpireAt),
@@ -83,25 +130,18 @@ export function CampaignForm({
     if (image.trim()) dto.image = image.trim();
     if (description.trim() || campaign?.description) dto.description = description.trim();
     if (terms.trim() || campaign?.terms) dto.terms = terms.trim();
-    if (voucherType === 'DISCOUNT') {
+    if (isDiscount) {
       dto.discountType = discountType;
-      dto.discountValue = n(discountValue);
-      if (!dto.discountValue || dto.discountValue < 1) return 'Nhập giá trị giảm.';
-      if (discountType === 'PERCENT') {
-        if (dto.discountValue > 100) return 'Phần trăm giảm từ 1 đến 100.';
-        dto.maxDiscount = n(maxDiscount);
-        if (!dto.maxDiscount || dto.maxDiscount < 1) return 'Giảm theo % cần mức giảm tối đa.';
-      }
+      dto.discountValue = prices.discountValue;
+      if (discountType === 'PERCENT') dto.maxDiscount = prices.maxDiscount;
     }
-    if (voucherType === 'COMBO') {
-      if (!comboItems.trim()) return 'Combo cần nội dung gói.';
-      dto.comboItems = comboItems.trim();
-    }
+    if (voucherType === 'COMBO') dto.comboItems = comboItems.trim();
     return dto;
   }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    setSubmitted(true);
     const dto = build();
     if (typeof dto === 'string') {
       setError(dto);
@@ -123,6 +163,9 @@ export function CampaignForm({
         {live ? (
           <Alert tone="warning">Chiến dịch đã được duyệt — lưu thay đổi sẽ đưa chiến dịch về trạng thái Chờ duyệt lại.</Alert>
         ) : null}
+        {sold ? (
+          <Alert tone="info">Đã có vé bán/giữ chỗ: không được đổi loại voucher hoặc giảm giá trị, quyền lợi.</Alert>
+        ) : null}
         <div className="form-grid">
           <div className="full">
             <Field label="Tên chiến dịch">
@@ -136,7 +179,7 @@ export function CampaignForm({
             <input type="url" value={image} onChange={(e) => setImage(e.target.value)} />
           </Field>
           <Field label="Loại voucher">
-            <select value={voucherType} onChange={(e) => setVoucherType(e.target.value as VoucherType)}>
+            <select value={voucherType} onChange={(e) => setVoucherType(e.target.value as VoucherType)} disabled={sold}>
               {(Object.keys(typeLabel) as VoucherType[]).map((t) => (
                 <option key={t} value={t}>
                   {typeLabel[t]}
@@ -144,31 +187,58 @@ export function CampaignForm({
               ))}
             </select>
           </Field>
-          <div />
-          <Field label="Giá bán mỗi vé (VND)">
-            <input type="number" min={1} step={1} value={salePrice} onChange={(e) => setSalePrice(e.target.value)} required />
-          </Field>
-          <Field label={voucherType === 'COMBO' ? 'Giá niêm yết gói (VND)' : 'Giá trị voucher (VND)'} hint="Phải lớn hơn giá bán">
-            <input type="number" min={1} step={1} value={faceValue} onChange={(e) => setFaceValue(e.target.value)} required />
-          </Field>
-          {voucherType === 'DISCOUNT' ? (
+          {isDiscount ? (
+            <Field label="Kiểu giảm">
+              <select value={discountType} onChange={(e) => setDiscountType(e.target.value as 'AMOUNT' | 'PERCENT')} disabled={sold}>
+                <option value="AMOUNT">Số tiền cố định</option>
+                <option value="PERCENT">Phần trăm</option>
+              </select>
+            </Field>
+          ) : (
+            <div />
+          )}
+
+          {isDiscount ? (
             <>
-              <Field label="Kiểu giảm">
-                <select value={discountType} onChange={(e) => setDiscountType(e.target.value as 'AMOUNT' | 'PERCENT')}>
-                  <option value="AMOUNT">Số tiền cố định</option>
-                  <option value="PERCENT">Phần trăm</option>
-                </select>
-              </Field>
-              <Field label={discountType === 'PERCENT' ? 'Phần trăm giảm (1–100)' : 'Số tiền giảm (VND)'}>
-                <input type="number" min={1} step={1} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} required />
-              </Field>
+              <PriceField
+                label={discountType === 'PERCENT' ? 'Phần trăm giảm (1–100)' : 'Số tiền giảm (VND)'}
+                hint={discountType === 'AMOUNT' ? 'Bội số 1.000đ; cũng là giá trị voucher' : undefined}
+                error={show('discountValue')}
+              >
+                <input type="number" min={1} step={discountType === 'PERCENT' ? 1 : 1000} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} required />
+              </PriceField>
               {discountType === 'PERCENT' ? (
-                <Field label="Giảm tối đa (VND)">
-                  <input type="number" min={1} step={1} value={maxDiscount} onChange={(e) => setMaxDiscount(e.target.value)} required />
-                </Field>
-              ) : null}
+                <PriceField label="Giảm tối đa (VND)" hint="Bội số 1.000đ; cũng là giá trị voucher" error={show('maxDiscount')}>
+                  <input type="number" min={1000} step={1000} value={maxDiscount} onChange={(e) => setMaxDiscount(e.target.value)} required />
+                </PriceField>
+              ) : (
+                <div />
+              )}
+              <PriceField label="Giá trị voucher (tự tính)" error={discountType === 'AMOUNT' ? show('faceValue') : undefined}>
+                <input className="read-only" value={Number.isFinite(effectiveFace) ? money(effectiveFace) : '—'} readOnly tabIndex={-1} />
+              </PriceField>
             </>
-          ) : null}
+          ) : (
+            <PriceField
+              label={voucherType === 'COMBO' ? 'Giá niêm yết gói (VND)' : 'Mệnh giá voucher (VND)'}
+              hint="Bội số 1.000đ"
+              error={show('faceValue')}
+            >
+              <input type="number" min={1000} step={1000} value={faceValue} onChange={(e) => setFaceValue(e.target.value)} required />
+            </PriceField>
+          )}
+          <PriceField
+            label="Giá bán mỗi vé (VND)"
+            hint={
+              Number.isFinite(effectiveFace) && effectiveFace > 0
+                ? 'Từ ' + money(minSalePrice(effectiveFace)) + ' đến dưới ' + money(effectiveFace) + ' (giảm tối đa 70%)'
+                : 'Nhỏ hơn giá trị, giảm tối đa 70%'
+            }
+            error={show('salePrice')}
+          >
+            <input type="number" min={1000} step={1000} value={salePrice} onChange={(e) => setSalePrice(e.target.value)} required />
+          </PriceField>
+
           {voucherType === 'COMBO' ? (
             <div className="full">
               <Field label="Nội dung combo">
@@ -176,6 +246,29 @@ export function CampaignForm({
               </Field>
             </div>
           ) : null}
+
+          <PriceField
+            label={'Ưu đãi nhân viên (%) · 0–' + MAX_STAFF_DISCOUNT_PERCENT}
+            hint="Nhân viên thương hiệu nhập mã nhân viên khi mua để được giá này. 0 = không áp dụng."
+            error={show('staffDiscountPercent')}
+          >
+            <input type="number" min={0} max={MAX_STAFF_DISCOUNT_PERCENT} step={1} value={staffPct} onChange={(e) => setStaffPct(e.target.value)} />
+          </PriceField>
+          <div className="price-preview" style={{ alignSelf: 'end' }}>
+            <div>
+              <span className="muted small">Giá trị</span>
+              <strong>{Number.isFinite(effectiveFace) ? money(effectiveFace) : '—'}</strong>
+            </div>
+            <div>
+              <span className="muted small">Giá bán</span>
+              <strong>{Number.isFinite(prices.salePrice) ? money(prices.salePrice) : '—'}</strong>
+            </div>
+            <div>
+              <span className="muted small">Giá nhân viên</span>
+              <strong>{staffPrice !== null ? money(staffPrice) : 'Không áp dụng'}</strong>
+            </div>
+          </div>
+
           <Field label="Số lượng phát hành">
             <input type="number" min={1} step={1} value={totalQuantity} onChange={(e) => setTotalQuantity(e.target.value)} required />
           </Field>

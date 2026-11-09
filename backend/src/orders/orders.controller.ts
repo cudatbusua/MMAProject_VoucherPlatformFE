@@ -12,6 +12,7 @@ import {
   DemoPaymentDto,
   RedeemDto,
   RefundDto,
+  StaffPriceQueryDto,
   TokenDto,
 } from './orders.dto';
 import { OrdersService } from './orders.service';
@@ -28,6 +29,11 @@ export class OrdersController {
   ) {}
   @Post() create(@CurrentUser() user: Principal, @Body() dto: CreateOrderDto) {
     return this.orders.create(user.userId, dto);
+  }
+  @Roles(Role.STORE_STAFF)
+  @Get('staff-price')
+  staffPrice(@CurrentUser() user: Principal, @Query() q: StaffPriceQueryDto) {
+    return this.orders.staffPricePreview(user.userId, q.campaignId, q.employeeCode);
   }
   @Get('me') async mine(@CurrentUser() user: Principal) {
     await this.orders.maintenance();

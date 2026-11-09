@@ -1,5 +1,19 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseEnumPipe,
+  Patch,
+  Post,
+  Query,
+  Res,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { CurrentUser, Principal, Public, Roles } from '../auth/security';
 import { ObjectIdPipe } from '../common/http';
 import { Database } from '../database/database.module';
@@ -7,6 +21,7 @@ import { CampaignStatus, Role } from '../database/schemas';
 import {
   CreateBrandDto,
   CampaignDto,
+  DocumentDto,
   ReasonDto,
   SearchDto,
   StaffDto,
@@ -15,6 +30,8 @@ import {
   UpdateStoreDto,
 } from './catalog.dto';
 import { CatalogService } from './catalog.service';
+import { DocumentsService, MAX_DOCUMENT_BYTES, UploadedFileLike } from './documents.service';
+import { LicenseType } from './rules';
 
 @ApiTags('Brands & stores')
 @ApiBearerAuth()
@@ -23,6 +40,7 @@ export class BrandController {
   constructor(
     private readonly catalog: CatalogService,
     private readonly db: Database,
+    private readonly documents: DocumentsService,
   ) {}
   @Roles(Role.ADMIN) @Post() create(@CurrentUser() user: Principal, @Body() dto: CreateBrandDto) {
     return this.catalog.createBrand(user, dto);
@@ -59,6 +77,10 @@ export class BrandController {
       campaigns: campaignIds.length,
       paidOrders: orderIds.length,
       ticketsSold: tickets[0]?.total ?? 0,
+      staffOrders: await this.db.orders.countDocuments({
+        _id: { $in: orderIds },
+        employeeCode: { $exists: true },
+      }),
       vouchersIssued: voucherIds.length,
       redemptions: await this.db.redemptions.countDocuments({ voucherId: { $in: voucherIds } }),
       grossRevenue: gross[0]?.total ?? 0,
@@ -67,6 +89,53 @@ export class BrandController {
       currency: 'VND',
     };
   }
+  @Roles(Role.BRAND_OWNER)
+  @Post(':id/documents')
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['type', 'number', 'issuer', 'issuedAt'],
+      properties: {
+        type: { type: 'string', enum: ['BUSINESS_LICENSE', 'FOOD_SAFETY'] },
+        number: { type: 'string' },
+        issuer: { type: 'string' },
+        issuedAt: { type: 'string', format: 'date' },
+        expiresAt: { type: 'string', format: 'date' },
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 } }))
+  uploadDocument(
+    @Param('id', ObjectIdPipe) id: string,
+    @CurrentUser() user: Principal,
+    @Body() dto: DocumentDto,
+    @UploadedFile() file?: UploadedFileLike,
+  ) {
+    return this.documents.upload(id, user, dto, file);
+  }
+  @Roles(Role.BRAND_OWNER) @Patch(':id/submit') submitBrand(
+    @Param('id', ObjectIdPipe) id: string,
+    @CurrentUser() user: Principal,
+  ) {
+    return this.documents.submit(id, user);
+  }
+  @Roles(Role.ADMIN, Role.BRAND_OWNER, Role.BRAND_MANAGER)
+  @Get(':id/documents/:type/file')
+  async documentFile(
+    @Param('id', ObjectIdPipe) id: string,
+    @Param('type', new ParseEnumPipe(['BUSINESS_LICENSE', 'FOOD_SAFETY'])) type: LicenseType,
+    @CurrentUser() user: Principal,
+    @Res() res: Response,
+  ) {
+    const f = await this.documents.file(id, type, user);
+    res.setHeader('Content-Type', f.mimeType);
+    res.setHeader('Content-Disposition', "inline; filename*=UTF-8''" + encodeURIComponent(f.fileName));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(f.buffer);
+  }
   @Roles(Role.ADMIN) @Get() all() {
     return this.db.brands.find().sort({ createdAt: -1 }).limit(100);
   }
@@ -74,27 +143,27 @@ export class BrandController {
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
-    return this.catalog.brandState(id, user, 'APPROVED');
+    return this.catalog.brandState(id, user, 'approve');
   }
   @Roles(Role.ADMIN) @Patch(':id/reject') reject(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
     @Body() dto: ReasonDto,
   ) {
-    return this.catalog.brandState(id, user, 'REJECTED', dto.reason);
+    return this.catalog.brandState(id, user, 'reject', dto.reason);
   }
   @Roles(Role.ADMIN) @Patch(':id/suspend') suspend(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
     @Body() dto: ReasonDto,
   ) {
-    return this.catalog.brandState(id, user, 'SUSPENDED', dto.reason);
+    return this.catalog.brandState(id, user, 'suspend', dto.reason);
   }
   @Roles(Role.ADMIN) @Patch(':id/reinstate') reinstate(
     @Param('id', ObjectIdPipe) id: string,
     @CurrentUser() user: Principal,
   ) {
-    return this.catalog.brandState(id, user, 'APPROVED');
+    return this.catalog.brandState(id, user, 'reinstate');
   }
   @Roles(Role.BRAND_MANAGER) @Post(':id/stores') store(
     @Param('id', ObjectIdPipe) id: string,

@@ -14,7 +14,10 @@ const NAV: Record<Exclude<Role, 'CUSTOMER'>, [string, string][]> = {
     ['/admin/redemptions', 'Lượt sử dụng'],
     ['/admin/audit', 'Nhật ký'],
   ],
-  BRAND_OWNER: [['/owner', 'Báo cáo thương hiệu']],
+  BRAND_OWNER: [
+    ['/owner', 'Báo cáo thương hiệu'],
+    ['/owner/documents', 'Hồ sơ pháp lý'],
+  ],
   BRAND_MANAGER: [
     ['/manager', 'Tổng quan'],
     ['/manager/campaigns', 'Chiến dịch'],
@@ -24,6 +27,9 @@ const NAV: Record<Exclude<Role, 'CUSTOMER'>, [string, string][]> = {
   STORE_STAFF: [
     ['/staff', 'Xác nhận voucher'],
     ['/staff/history', 'Lịch sử hôm nay'],
+    ['/staff/shop', 'Mua voucher'],
+    ['/staff/orders', 'Đơn của tôi'],
+    ['/staff/wallet', 'Ví của tôi'],
   ],
 };
 
@@ -46,6 +52,12 @@ export function Layout() {
           <div className="who">
             <strong>{user.fullName || user.email}</strong>
             <span className="muted">{roleLabel[user.role]}</span>
+            {user.employeeCode ? (
+              <div style={{ marginTop: 6 }}>
+                <span className="muted">Mã NV </span>
+                <span className="employee-code" data-testid="employee-code">{user.employeeCode}</span>
+              </div>
+            ) : null}
           </div>
           <button className="btn btn-ghost" onClick={() => void logout()}>
             Đăng xuất

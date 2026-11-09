@@ -72,6 +72,15 @@ export class CampaignDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @Length(1, 2000) comboItems?: string;
   @ApiProperty({ example: 100 }) @IsInt() @Min(1) @Max(1000000) totalQuantity: number;
   @ApiPropertyOptional({ default: 5 }) @IsOptional() @IsInt() @Min(1) @Max(100) limitPerUser?: number;
+  @ApiPropertyOptional({
+    default: 0,
+    description: '% giảm cho nhân viên thương hiệu (0–50, 0 = không áp dụng)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(50)
+  staffDiscountPercent?: number;
   @ApiProperty() @IsDateString() saleStartAt: string;
   @ApiProperty() @IsDateString() saleEndAt: string;
   @ApiProperty() @IsDateString() voucherExpireAt: string;
@@ -112,6 +121,15 @@ export class SearchDto {
     20;
 }
 
+export class DocumentDto {
+  @ApiProperty({ enum: ['BUSINESS_LICENSE', 'FOOD_SAFETY'] })
+  @IsIn(['BUSINESS_LICENSE', 'FOOD_SAFETY'])
+  type: 'BUSINESS_LICENSE' | 'FOOD_SAFETY';
+  @ApiProperty({ example: '0312345678' }) @IsString() @Length(3, 60) number: string;
+  @ApiProperty({ example: 'Sở KH&ĐT TP.HCM' }) @IsString() @Length(2, 200) issuer: string;
+  @ApiProperty({ example: '2025-01-15' }) @IsDateString() issuedAt: string;
+  @ApiPropertyOptional({ example: '2028-01-15' }) @IsOptional() @IsDateString() expiresAt?: string;
+}
 export class CreateBrandDto extends BrandDto {
   @ApiProperty({ description: 'Chủ sở hữu chỉ xem số liệu; admin chọn tài khoản BRAND_OWNER.' })
   @IsMongoId()

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
@@ -17,6 +18,20 @@ export class CreateOrderDto {
   @ApiProperty({ description: 'UUID mới cho mỗi lần checkout; gửi lại cùng key để tránh tạo trùng.' })
   @IsUUID('4')
   idempotencyKey: string;
+  @ApiPropertyOptional({ example: 'NV-STAFF1', description: 'Mã nhân viên của chính tài khoản STORE_STAFF' })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @IsString()
+  @Matches(/^NV-[A-Z0-9]{6}$/, { message: 'Mã nhân viên có dạng NV-XXXXXX.' })
+  employeeCode?: string;
+}
+export class StaffPriceQueryDto {
+  @ApiProperty() @IsMongoId() campaignId: string;
+  @ApiProperty({ example: 'NV-STAFF1' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  @IsString()
+  @Matches(/^NV-[A-Z0-9]{6}$/, { message: 'Mã nhân viên có dạng NV-XXXXXX.' })
+  employeeCode: string;
 }
 export class DemoPaymentDto {
   @ApiPropertyOptional({ default: true }) @IsOptional() @IsBoolean() success?: boolean;

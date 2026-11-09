@@ -1,4 +1,4 @@
-import type { BrandStatus, CampaignStatus, Role, VoucherType } from '../types';
+import type { BrandStatus, CampaignStatus, LicenseType, Order, Role, VoucherStatus, VoucherType } from '../types';
 
 export const money = (v: number) => new Intl.NumberFormat('vi-VN').format(Math.round(v)) + 'đ';
 
@@ -45,9 +45,10 @@ export const campaignStatus: Record<CampaignStatus, [string, Tone]> = {
 };
 
 export const brandStatus: Record<BrandStatus, [string, Tone]> = {
+  DRAFT: ['Chờ nộp hồ sơ', 'neutral'],
   PENDING: ['Chờ duyệt', 'warning'],
   APPROVED: ['Đã duyệt', 'success'],
-  REJECTED: ['Từ chối', 'danger'],
+  REJECTED: ['Bị trả hồ sơ', 'danger'],
   SUSPENDED: ['Đình chỉ', 'danger'],
 };
 
@@ -66,3 +67,27 @@ export function benefit(c: {
   if (c.voucherType === 'COMBO') return 'Combo: ' + (c.comboItems ?? '');
   return 'Mệnh giá ' + money(c.faceValue);
 }
+
+export const licenseLabel: Record<LicenseType, string> = {
+  BUSINESS_LICENSE: 'Giấy phép kinh doanh',
+  FOOD_SAFETY: 'Chứng nhận an toàn thực phẩm',
+};
+
+export const orderStatus: Record<Order['status'], [string, Tone]> = {
+  PENDING: ['Chờ thanh toán', 'warning'],
+  FULFILLED: ['Đã thanh toán', 'success'],
+  CANCELLED: ['Đã hủy', 'neutral'],
+};
+
+export const voucherStatus: Record<VoucherStatus, [string, Tone]> = {
+  ACTIVE: ['Còn hiệu lực', 'success'],
+  USED: ['Đã dùng hết', 'neutral'],
+  EXPIRED: ['Hết hạn', 'danger'],
+  REFUND_PENDING: ['Đang chờ hoàn', 'warning'],
+  REFUNDED: ['Đã hoàn tiền', 'info'],
+};
+
+/** Value for <input type="date"> from an ISO date. */
+export const toDateInput = (iso?: string) => (iso ? new Date(iso).toISOString().slice(0, 10) : '');
+
+export const fileSize = (n: number) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.ceil(n / 1024) + ' KB');

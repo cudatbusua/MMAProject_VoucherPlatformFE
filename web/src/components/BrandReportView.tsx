@@ -21,6 +21,7 @@ export function BrandReportView({ brandId }: { brandId: string }) {
             <Stat label="Doanh thu ròng" value={money(r.netRevenue)} />
             <Stat label="Đơn đã thanh toán" value={r.paidOrders} />
             <Stat label="Vé đã bán" value={r.ticketsSold} />
+            <Stat label="Đơn giá nhân viên" value={r.staffOrders} />
             <Stat label="Voucher đã cấp" value={r.vouchersIssued} />
             <Stat label="Lượt sử dụng" value={r.redemptions} />
             <Stat label="Chiến dịch" value={r.campaigns} />

@@ -72,7 +72,10 @@ export function ManagerCampaignsPage() {
                   <tr key={c.id}>
                     <td>
                       <strong>{c.title}</strong>
-                      <div className="sub">{typeLabel[c.voucherType]} · {c.category}</div>
+                      <div className="sub">
+                        {typeLabel[c.voucherType]} · {c.category}
+                        {c.staffDiscountPercent ? ' · NV -' + c.staffDiscountPercent + '%' : ''}
+                      </div>
                     </td>
                     <td>{money(c.salePrice)}<div className="sub">/ {money(c.faceValue)}</div></td>
                     <td>

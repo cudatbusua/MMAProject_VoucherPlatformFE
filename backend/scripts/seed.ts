@@ -14,10 +14,12 @@ async function main() {
       throw new Error('Set SEED_PASSWORD (minimum 8 characters) in .env first.');
     const data = await seedData(app.get(Database), password);
     console.log(
-      'Seed ready: admin@voucher.local, owner@voucher.local, manager@voucher.local, staff@voucher.local, customer@voucher.local. Password: SEED_PASSWORD from .env.',
+      'Seed ready: admin@voucher.local, owner@voucher.local, manager@voucher.local, staff@voucher.local (NV-STAFF1), staff2@voucher.local (NV-STAFF2), customer@voucher.local. Password: SEED_PASSWORD from .env.',
     );
     console.log('Brand ID: ' + data.brand._id + ' | Store ID: ' + data.store._id);
-    console.log('7 sample campaigns. Existing documents were not overwritten.');
+    console.log(
+      '7 sample campaigns (3 with employee discount). Brand "Trà Sữa Mây" is DRAFT for the license-review demo. Existing documents were not overwritten.',
+    );
   } finally {
     await app.close();
   }

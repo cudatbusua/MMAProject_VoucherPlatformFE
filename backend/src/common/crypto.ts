@@ -16,3 +16,11 @@ export async function verifyPassword(value: string, encoded?: string) {
   const stored = Buffer.from(hex, 'hex');
   return stored.length === key.length && timingSafeEqual(stored, key);
 }
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid misreading
+/** Employee code shown to staff, e.g. NV-7K3Q9P. */
+export function newEmployeeCode() {
+  const bytes = randomBytes(6);
+  let code = 'NV-';
+  for (const b of bytes) code += CODE_ALPHABET[b % CODE_ALPHABET.length];
+  return code;
+}

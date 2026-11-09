@@ -10,7 +10,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { Types, ClientSession } from 'mongoose';
 import { Database } from '../database/database.module';
-import { CampaignStatus } from '../database/schemas';
+import { CampaignStatus, Role } from '../database/schemas';
+import { staffUnitPrice } from '../catalog/rules';
 import { CreateOrderDto } from './orders.dto';
 
 @Injectable()
@@ -118,14 +119,25 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
           { session },
         );
         if (!quota.modifiedCount) throw new BadRequestException('Vượt giới hạn mua mỗi người.');
+        const staff = dto.employeeCode
+          ? await this.staffPricing(customerId, c, dto.employeeCode, session)
+          : null;
+        const unitPrice = staff?.staffPrice ?? c.salePrice;
         const [order] = await this.db.orders.create(
           [
             {
               customerId,
               campaignId: c._id,
               quantity: dto.quantity,
-              unitPrice: c.salePrice,
-              totalAmount: c.salePrice * dto.quantity,
+              unitPrice,
+              totalAmount: unitPrice * dto.quantity,
+              ...(staff
+                ? {
+                    employeeCode: dto.employeeCode,
+                    listUnitPrice: c.salePrice,
+                    staffDiscountPercent: staff.percent,
+                  }
+                : {}),
               expiresAt: new Date(Date.now() + 15 * 60000),
               idempotencyKey: dto.idempotencyKey,
               snapshot: {
@@ -155,13 +167,46 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
       throw error;
     }
   }
-  private assertSameCheckout<T extends { campaignId: Types.ObjectId; quantity: number }>(
-    order: T,
-    dto: CreateOrderDto,
-  ) {
-    if (String(order.campaignId) !== dto.campaignId || order.quantity !== dto.quantity)
+  private assertSameCheckout<
+    T extends { campaignId: Types.ObjectId; quantity: number; employeeCode?: string },
+  >(order: T, dto: CreateOrderDto) {
+    if (
+      String(order.campaignId) !== dto.campaignId ||
+      order.quantity !== dto.quantity ||
+      (order.employeeCode ?? null) !== (dto.employeeCode ?? null)
+    )
       throw new BadRequestException('Idempotency key đã được dùng cho đơn khác.');
     return order;
+  }
+
+  /**
+   * Employee price: only the STORE_STAFF owning the code, only for campaigns sold at a store of a brand
+   * the staff works for, and only when the campaign offers an employee discount.
+   */
+  async staffPricing(
+    userId: string,
+    c: { brandId: Types.ObjectId; salePrice: number; staffDiscountPercent?: number },
+    code: string,
+    session?: ClientSession,
+  ) {
+    const user = await this.db.users.findById(userId).session(session ?? null);
+    if (!user || user.role !== Role.STORE_STAFF)
+      throw new BadRequestException('Chỉ nhân viên cửa hàng được dùng mã nhân viên.');
+    if (user.employeeCode !== code)
+      throw new BadRequestException('Mã nhân viên không đúng với tài khoản của bạn.');
+    const ownBrand = await this.db.stores
+      .exists({ _id: { $in: user.storeIds }, brandId: c.brandId, active: true })
+      .session(session ?? null);
+    if (!ownBrand) throw new BadRequestException('Voucher không thuộc thương hiệu bạn đang làm việc.');
+    const percent = c.staffDiscountPercent ?? 0;
+    if (percent <= 0) throw new BadRequestException('Chiến dịch này không có ưu đãi nhân viên.');
+    return { percent, listPrice: c.salePrice, staffPrice: staffUnitPrice(c.salePrice, percent) };
+  }
+
+  async staffPricePreview(userId: string, campaignId: string, code: string) {
+    const c = await this.db.campaigns.findById(campaignId);
+    if (!c) throw new NotFoundException('Không tìm thấy chiến dịch.');
+    return this.staffPricing(userId, c, code);
   }
   async find(customerId: string, id: string) {
     const order = await this.db.orders.findOne({ _id: id, customerId });
@@ -240,6 +285,9 @@ export class OrdersService implements OnModuleInit, OnModuleDestroy {
             usageLimit: order.quantity,
             usedCount: 0,
             remainingUses: order.quantity,
+            // Price per ticket actually paid (employee price when a staff code was used).
+            salePrice: order.unitPrice,
+            ...(order.staffDiscountPercent ? { staffDiscountPercent: order.staffDiscountPercent } : {}),
             totalPrice: order.totalAmount,
             expiresAt: order.snapshot.voucherExpireAt,
             status: 'ACTIVE',

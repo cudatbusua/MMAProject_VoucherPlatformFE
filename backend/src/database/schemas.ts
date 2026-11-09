@@ -33,6 +33,8 @@ export interface User extends Base {
   passwordHash?: string;
   storeIds: Types.ObjectId[];
   brandIds: Types.ObjectId[];
+  /** Only STORE_STAFF: personal code that unlocks the employee price on own-brand vouchers. */
+  employeeCode?: string;
 }
 export interface Session extends Base {
   userId: Types.ObjectId;
@@ -48,13 +50,32 @@ export interface Otp extends Base {
   requestedAt: Date;
   consumed: boolean;
 }
+export type LicenseType = 'BUSINESS_LICENSE' | 'FOOD_SAFETY';
+export interface BrandDocument {
+  type: LicenseType;
+  number: string;
+  issuer: string;
+  issuedAt: Date;
+  expiresAt?: Date;
+  /** Random server-side file name inside UPLOAD_DIR; never derived from user input. */
+  fileKey: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: Date;
+}
+export type BrandStatus = 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
 export interface Brand extends Base {
   ownerId: Types.ObjectId;
   name: string;
   logo?: string;
   description?: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+  status: BrandStatus;
   reason?: string;
+  documents: BrandDocument[];
+  submittedAt?: Date;
+  reviewedAt?: Date;
+  reviewedBy?: Types.ObjectId;
 }
 export interface Store extends Base {
   brandId: Types.ObjectId;
@@ -81,6 +102,8 @@ export interface Campaign extends Base {
   soldQuantity: number;
   reservedQuantity: number;
   limitPerUser: number;
+  /** 0 = no employee price for this campaign. */
+  staffDiscountPercent: number;
   saleStartAt: Date;
   saleEndAt: Date;
   voucherExpireAt: Date;
@@ -104,6 +127,10 @@ export interface Order extends Base {
   status: 'PENDING' | 'FULFILLED' | 'CANCELLED';
   expiresAt: Date;
   idempotencyKey: string;
+  /** Set when a staff member bought at the employee price; unitPrice is then the discounted price. */
+  employeeCode?: string;
+  listUnitPrice?: number;
+  staffDiscountPercent?: number;
   snapshot: {
     title: string;
     brandId: Types.ObjectId;
@@ -145,6 +172,7 @@ export interface Voucher extends Base {
   discountValue?: number;
   maxDiscount?: number;
   comboItems?: string;
+  staffDiscountPercent?: number;
   status: 'ACTIVE' | 'USED' | 'REFUND_PENDING' | 'REFUNDED' | 'EXPIRED';
   expiresAt: Date;
   usedAt?: Date;
@@ -216,8 +244,13 @@ export const UserSchema = new Schema<User>(
     passwordHash: { type: String, select: false },
     storeIds: [ref('Store')],
     brandIds: [ref('Brand')],
+    employeeCode: { type: String, uppercase: true, trim: true },
   },
   options,
+);
+UserSchema.index(
+  { employeeCode: 1 },
+  { unique: true, partialFilterExpression: { employeeCode: { $type: 'string' } } },
 );
 export const SessionSchema = new Schema<Session>(
   {
@@ -241,14 +274,45 @@ export const OtpSchema = new Schema<Otp>(
   options,
 );
 OtpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 3600 });
+const BrandDocumentSchema = new Schema<BrandDocument>(
+  {
+    type: { type: String, enum: ['BUSINESS_LICENSE', 'FOOD_SAFETY'], required: true },
+    number: { type: String, required: true },
+    issuer: { type: String, required: true },
+    issuedAt: { type: Date, required: true },
+    expiresAt: Date,
+    fileKey: { type: String, required: true },
+    fileName: { type: String, required: true },
+    mimeType: { type: String, required: true },
+    size: { type: Number, required: true },
+    uploadedAt: { type: Date, required: true },
+  },
+  {
+    _id: false,
+    toJSON: {
+      transform: (_doc: unknown, result: Record<string, unknown>) => {
+        delete result.fileKey;
+        return result;
+      },
+    },
+  },
+);
 export const BrandSchema = new Schema<Brand>(
   {
     ownerId: ref('User'),
     name: { type: String, required: true },
     logo: String,
     description: String,
-    status: { type: String, enum: ['PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED'], default: 'PENDING' },
+    status: {
+      type: String,
+      enum: ['DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED'],
+      default: 'DRAFT',
+    },
     reason: String,
+    documents: { type: [BrandDocumentSchema], default: [] },
+    submittedAt: Date,
+    reviewedAt: Date,
+    reviewedBy: optionalRef('User'),
   },
   options,
 );
@@ -287,6 +351,7 @@ export const CampaignSchema = new Schema<Campaign>(
     soldQuantity: counter,
     reservedQuantity: counter,
     limitPerUser: { ...positive, default: 5 },
+    staffDiscountPercent: { type: Number, default: 0, min: 0, max: 50, validate: Number.isSafeInteger },
     saleStartAt: { type: Date, required: true },
     saleEndAt: { type: Date, required: true },
     voucherExpireAt: { type: Date, required: true },
@@ -314,6 +379,9 @@ export const OrderSchema = new Schema<Order>(
     status: { type: String, enum: ['PENDING', 'FULFILLED', 'CANCELLED'], default: 'PENDING' },
     expiresAt: { type: Date, required: true },
     idempotencyKey: { type: String, required: true },
+    employeeCode: String,
+    listUnitPrice: Number,
+    staffDiscountPercent: Number,
     snapshot: { type: Schema.Types.Mixed, required: true },
   },
   options,
@@ -351,6 +419,7 @@ export const VoucherSchema = new Schema<Voucher>(
     discountValue: Number,
     maxDiscount: Number,
     comboItems: String,
+    staffDiscountPercent: Number,
     status: {
       type: String,
       enum: ['ACTIVE', 'USED', 'REFUND_PENDING', 'REFUNDED', 'EXPIRED'],

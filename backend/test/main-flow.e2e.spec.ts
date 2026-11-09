@@ -51,6 +51,29 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     const wallet = await call('get', '/wallet', token).expect(200);
     return { orderId, voucher: wallet.body.data.find((v: { orderId: string }) => v.orderId === orderId) };
   };
+  const loginAs = async (email: string) =>
+    (await call('post', '/auth/login').send({ email, password: 'Voucher@123' }).expect(201)).body.data
+      .accessToken as string;
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<< >>\nendobj\ntrailer\n<< >>\n%%EOF\n', 'latin1');
+  const uploadDoc = (
+    token: string,
+    brandId: string,
+    type: 'BUSINESS_LICENSE' | 'FOOD_SAFETY',
+    o: { expiresAt?: string | null; file?: Buffer | null; issuedAt?: string } = {},
+  ) => {
+    const req = call('post', '/brands/' + brandId + '/documents', token)
+      .field('type', type)
+      .field('number', type === 'FOOD_SAFETY' ? 'ATTP-001' : 'GPKD-001')
+      .field('issuer', 'Sở kiểm thử')
+      .field('issuedAt', o.issuedAt ?? new Date(Date.now() - 30 * 86400000).toISOString());
+    const expiresAt =
+      o.expiresAt === undefined ? new Date(Date.now() + 365 * 86400000).toISOString() : o.expiresAt;
+    if (expiresAt) req.field('expiresAt', expiresAt);
+    if (o.file !== null)
+      req.attach('file', o.file ?? pdf, { filename: type + '.pdf', contentType: 'application/pdf' });
+    return req;
+  };
+  let otherBrandCampaignId = '';
   const campaignBody = (overrides: Record<string, unknown> = {}) => ({
     title: 'Chiến dịch kiểm thử ' + ++counter,
     voucherType: VoucherType.PREPAID,
@@ -224,6 +247,17 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     await call('patch', '/campaigns/' + c.body.data.id + '/submit', otherToken)
       .send({})
       .expect(400);
+    // DRAFT brands cannot be approved until the owner submits both licenses.
+    await call('patch', '/brands/' + id + '/approve', admin)
+      .send({})
+      .expect(400);
+    const owner2 = await loginAs('newowner@example.com');
+    await uploadDoc(owner2, id, 'BUSINESS_LICENSE').expect(201);
+    await uploadDoc(owner2, id, 'FOOD_SAFETY').expect(201);
+    await call('patch', '/brands/' + id + '/submit', owner2)
+      .send({})
+      .expect(200);
+    otherBrandCampaignId = c.body.data.id;
     await call('patch', '/brands/' + id + '/approve', admin)
       .send({})
       .expect(200);
@@ -736,5 +770,283 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
       })
       .expect(201);
     expect((await db.vouchers.findById(voucher!._id))!.status).toBe('USED');
+  });
+
+  // ---------- Brand licenses (business license + food safety) ----------
+  it('brand licenses: owner-only upload, file sniffing, completeness, review loop and private files', async () => {
+    const draft = String(seed.draftBrand._id);
+    expect(seed.draftBrand.status).toBe('DRAFT');
+    // Managers, customers and other owners cannot upload; only PDF/PNG/JPG accepted.
+    await uploadDoc(manager, draft, 'BUSINESS_LICENSE').expect(403);
+    await uploadDoc(customer, draft, 'BUSINESS_LICENSE').expect(403);
+    await uploadDoc(await loginAs('newowner@example.com'), draft, 'BUSINESS_LICENSE').expect(403);
+    await uploadDoc(owner, draft, 'BUSINESS_LICENSE', { file: Buffer.from('MZ fake exe') }).expect(400);
+    await uploadDoc(owner, draft, 'BUSINESS_LICENSE', { file: null }).expect(400);
+    await uploadDoc(owner, draft, 'BUSINESS_LICENSE', {
+      issuedAt: new Date(Date.now() + 3 * 86400000).toISOString(),
+    }).expect(400);
+    await uploadDoc(owner, draft, 'FOOD_SAFETY', { expiresAt: null }).expect(400);
+    const one = await uploadDoc(owner, draft, 'BUSINESS_LICENSE', { expiresAt: null }).expect(201);
+    expect(one.body.data.documents[0].fileKey).toBeUndefined();
+    expect(one.body.data.documents[0].mimeType).toBe('application/pdf');
+    // Incomplete or short-lived food-safety certificate cannot be submitted.
+    await call('patch', '/brands/' + draft + '/submit', owner)
+      .send({})
+      .expect(400);
+    await uploadDoc(owner, draft, 'FOOD_SAFETY', {
+      expiresAt: new Date(Date.now() + 10 * 86400000).toISOString(),
+    }).expect(201);
+    const short = await call('patch', '/brands/' + draft + '/submit', owner)
+      .send({})
+      .expect(400);
+    expect(short.body.error.message).toContain('30 ngày');
+    // Editing details without a new file keeps the stored file but persists the new dates.
+    const before = (await db.brands.findById(draft))!.documents.find((d) => d.type === 'FOOD_SAFETY')!;
+    const newExpiry = new Date(Date.now() + 400 * 86400000);
+    const edited = await uploadDoc(owner, draft, 'FOOD_SAFETY', {
+      expiresAt: newExpiry.toISOString(),
+      file: null,
+    }).expect(201);
+    const editedDoc = edited.body.data.documents.find((d: { type: string }) => d.type === 'FOOD_SAFETY');
+    expect(new Date(editedDoc.expiresAt).getTime()).toBe(newExpiry.getTime());
+    const brandDoc = await db.brands.findById(draft);
+    expect(brandDoc!.documents).toHaveLength(2);
+    const after = brandDoc!.documents.find((d) => d.type === 'FOOD_SAFETY')!;
+    expect(after.expiresAt!.getTime()).toBe(newExpiry.getTime());
+    expect(after.fileKey).toBe(before.fileKey);
+    expect(after.mimeType).toBe('application/pdf');
+    await call('patch', '/brands/' + draft + '/submit', manager)
+      .send({})
+      .expect(403);
+    const sub = await call('patch', '/brands/' + draft + '/submit', owner)
+      .send({})
+      .expect(200);
+    expect(sub.body.data.status).toBe('PENDING');
+    // Locked while under review.
+    await uploadDoc(owner, draft, 'FOOD_SAFETY').expect(400);
+    // Files are private: admin + owner yes, customer / unrelated manager no.
+    const file = await call('get', '/brands/' + draft + '/documents/FOOD_SAFETY/file', admin).expect(200);
+    expect(file.headers['content-type']).toContain('application/pdf');
+    expect(file.body.subarray(0, 5).toString()).toBe('%PDF-');
+    await call('get', '/brands/' + draft + '/documents/FOOD_SAFETY/file', owner).expect(200);
+    await call('get', '/brands/' + draft + '/documents/FOOD_SAFETY/file', customer).expect(403);
+    await call('get', '/brands/' + draft + '/documents/FOOD_SAFETY/file', manager).expect(403);
+    await call('get', '/brands/' + draft + '/documents/OTHER/file', admin).expect(400);
+    // Admin returns the file with a reason; owner fixes and resubmits; admin approves.
+    await call('patch', '/brands/' + draft + '/reject', admin)
+      .send({ reason: 'Ảnh mờ' })
+      .expect(200);
+    const mine = await call('get', '/brands/me', owner).expect(200);
+    const rejected = mine.body.data.find((b: { id: string }) => b.id === draft);
+    expect(rejected.status).toBe('REJECTED');
+    expect(rejected.reason).toBe('Ảnh mờ');
+    await uploadDoc(owner, draft, 'BUSINESS_LICENSE').expect(201);
+    await call('patch', '/brands/' + draft + '/submit', owner)
+      .send({})
+      .expect(200);
+    const ok = await call('patch', '/brands/' + draft + '/approve', admin)
+      .send({})
+      .expect(200);
+    expect(ok.body.data.status).toBe('APPROVED');
+    await call('patch', '/brands/' + draft + '/approve', admin)
+      .send({})
+      .expect(400);
+    await call('patch', '/brands/' + draft + '/reinstate', admin)
+      .send({})
+      .expect(400);
+    await call('patch', '/brands/' + draft + '/suspend', admin)
+      .send({ reason: 'Kiểm tra' })
+      .expect(200);
+    await call('patch', '/brands/' + draft + '/reinstate', admin)
+      .send({})
+      .expect(200);
+    // Seeded approved brand ships with both sample licenses.
+    const seeded = await call(
+      'get',
+      '/brands/' + seed.brand._id + '/documents/BUSINESS_LICENSE/file',
+      manager,
+    );
+    expect(seeded.status).toBe(200);
+  });
+
+  // ---------- Price constraints ----------
+  it('price rules: whole thousands, max 70% off, DISCOUNT value consistency, staff discount bounds', async () => {
+    const post = (o: Record<string, unknown>) =>
+      call('post', '/campaigns/brand/' + seed.brand._id, manager).send(campaignBody(o));
+    const msg = async (o: Record<string, unknown>) =>
+      (await post(o).expect(400)).body.error.message as string;
+    expect(await msg({ salePrice: 30500 })).toContain('1.000');
+    expect(await msg({ salePrice: 500, faceValue: 1000 })).toContain('1.000');
+    expect(await msg({ salePrice: 14000, faceValue: 50000 })).toContain('30%');
+    await post({ salePrice: 15000, faceValue: 50000 }).expect(201);
+    expect(
+      await msg({ voucherType: 'DISCOUNT', discountType: 'AMOUNT', discountValue: 40000, faceValue: 50000 }),
+    ).toContain('bằng đúng số tiền giảm');
+    await post({
+      voucherType: 'DISCOUNT',
+      discountType: 'AMOUNT',
+      discountValue: 50000,
+      faceValue: 50000,
+    }).expect(201);
+    expect(
+      await msg({ voucherType: 'DISCOUNT', discountType: 'PERCENT', discountValue: 20, maxDiscount: 60000 }),
+    ).toContain('mức giảm tối đa');
+    await post({
+      voucherType: 'DISCOUNT',
+      discountType: 'PERCENT',
+      discountValue: 20,
+      maxDiscount: 50000,
+    }).expect(201);
+    await post({ staffDiscountPercent: 60 }).expect(400);
+    await post({ staffDiscountPercent: 10.5 }).expect(400);
+    expect(await msg({ salePrice: 3000, faceValue: 5000, staffDiscountPercent: 50 })).toContain('50%');
+    const ok = await post({ staffDiscountPercent: 50 }).expect(201);
+    expect(ok.body.data.staffDiscountPercent).toBe(50);
+    // After a sale, value/benefits may not be lowered.
+    const c = await post({ title: 'Đã có vé bán ' + ++counter }).expect(201);
+    await call('patch', '/campaigns/' + c.body.data.id + '/submit', manager)
+      .send({})
+      .expect(200);
+    await call('patch', '/campaigns/' + c.body.data.id + '/approve', admin)
+      .send({})
+      .expect(200);
+    await checkout(customer, c.body.data.id).expect(201);
+    await call('patch', '/campaigns/' + c.body.data.id, manager)
+      .send({ faceValue: 45000 })
+      .expect(400);
+    await call('patch', '/campaigns/' + c.body.data.id, manager)
+      .send({ faceValue: 60000 })
+      .expect(200);
+  });
+
+  // ---------- Staff purchase with employee code ----------
+  it('staff buys at employee price with own code only, on own brand, when the campaign offers it', async () => {
+    const me = await call('get', '/users/me', staff).expect(200);
+    expect(me.body.data.employeeCode).toBe('NV-STAFF1');
+    const discounted = String(seed.campaigns[0]._id); // 30.000đ, 20% staff discount
+    const noDiscount = String(seed.campaigns[1]._id);
+    const preview = await call(
+      'get',
+      '/orders/staff-price?campaignId=' + discounted + '&employeeCode=nv-staff1',
+      staff,
+    ).expect(200);
+    expect(preview.body.data).toEqual({ percent: 20, listPrice: 30000, staffPrice: 24000 });
+    await call(
+      'get',
+      '/orders/staff-price?campaignId=' + discounted + '&employeeCode=NV-STAFF1',
+      customer,
+    ).expect(403);
+    const err = async (token: string, body: Record<string, unknown>) =>
+      (
+        await call('post', '/orders', token)
+          .send({ quantity: 1, idempotencyKey: randomUUID(), ...body })
+          .expect(400)
+      ).body.error.message as string;
+    expect(await err(staff, { campaignId: discounted, employeeCode: 'NV-STAFF2' })).toContain('không đúng');
+    expect(await err(customer, { campaignId: discounted, employeeCode: 'NV-STAFF1' })).toContain(
+      'Chỉ nhân viên',
+    );
+    expect(await err(staff, { campaignId: noDiscount, employeeCode: 'NV-STAFF1' })).toContain(
+      'không có ưu đãi',
+    );
+    expect(await err(staff, { campaignId: discounted, employeeCode: 'BAD' })).toEqual([
+      'Mã nhân viên có dạng NV-XXXXXX.',
+    ]);
+    const foreign = await call(
+      'get',
+      '/orders/staff-price?campaignId=' + otherBrandCampaignId + '&employeeCode=NV-STAFF1',
+      staff,
+    ).expect(400);
+    expect(foreign.body.error.message).toContain('không thuộc thương hiệu');
+    // Rejected attempts leave no reservation behind.
+    const quota = await db.quotas.findOne({ userId: me.body.data.id, campaignId: discounted });
+    expect(quota?.reserved ?? 0).toBe(0);
+    const key = randomUUID();
+    const order = await call('post', '/orders', staff)
+      .send({ campaignId: discounted, quantity: 2, idempotencyKey: key, employeeCode: 'NV-STAFF1' })
+      .expect(201);
+    expect(order.body.data).toMatchObject({
+      unitPrice: 24000,
+      totalAmount: 48000,
+      listUnitPrice: 30000,
+      staffDiscountPercent: 20,
+      employeeCode: 'NV-STAFF1',
+    });
+    await call('post', '/orders', staff)
+      .send({ campaignId: discounted, quantity: 2, idempotencyKey: key })
+      .expect(400);
+    const replay = await call('post', '/orders', staff)
+      .send({ campaignId: discounted, quantity: 2, idempotencyKey: key, employeeCode: 'NV-STAFF1' })
+      .expect(201);
+    expect(replay.body.data.id).toBe(order.body.data.id);
+    await call('post', '/orders/' + order.body.data.id + '/simulate-payment', staff)
+      .send({ success: true })
+      .expect(201);
+    const wallet = await call('get', '/wallet', staff).expect(200);
+    const v = wallet.body.data.find((x: { orderId: string }) => x.orderId === order.body.data.id);
+    expect(v).toMatchObject({ salePrice: 24000, totalPrice: 48000, usageLimit: 2, staffDiscountPercent: 20 });
+    // Normal price still available to staff without a code.
+    const normal = await call('post', '/orders', staff)
+      .send({ campaignId: noDiscount, quantity: 1, idempotencyKey: randomUUID() })
+      .expect(201);
+    expect(normal.body.data.unitPrice).toBe(seed.campaigns[1].salePrice);
+    // Own voucher cannot be self-redeemed; colleague confirms it.
+    const code = await call('post', '/redeem/token', staff).send({ voucherItemId: v.id }).expect(201);
+    const body = { storeId: String(seed.store._id), billAmount: 60000, otpCode: code.body.data.otpCode };
+    await call('post', '/redeem', staff)
+      .send({ ...body, idempotencyKey: randomUUID() })
+      .expect(403);
+    const staff2 = await loginAs('staff2@voucher.local');
+    await call('post', '/auth/select-store', staff2)
+      .send({ storeId: String(seed.store._id) })
+      .expect(201);
+    const used = await call('post', '/redeem', staff2)
+      .send({ ...body, idempotencyKey: randomUUID() })
+      .expect(201);
+    expect(used.body.data.remainingUses).toBe(1);
+    // Refund of an employee-price bundle returns what was actually paid.
+    const o2 = await call('post', '/orders', staff)
+      .send({ campaignId: discounted, quantity: 1, idempotencyKey: randomUUID(), employeeCode: 'NV-STAFF1' })
+      .expect(201);
+    await call('post', '/orders/' + o2.body.data.id + '/simulate-payment', staff)
+      .send({ success: true })
+      .expect(201);
+    const v2 = (await call('get', '/wallet', staff)).body.data.find(
+      (x: { orderId: string }) => x.orderId === o2.body.data.id,
+    );
+    const refund = await call('post', '/refunds', staff)
+      .send({ voucherItemId: v2.id, reason: 'Thử hoàn' })
+      .expect(201);
+    expect(refund.body.data.amount).toBe(24000);
+    // Brand report counts employee-price orders.
+    const report = await call('get', '/brands/' + seed.brand._id + '/reports/overview', manager).expect(200);
+    expect(report.body.data.staffOrders).toBeGreaterThanOrEqual(2);
+  });
+
+  it('employee codes: unique per staff, issued on creation and role change, removed when leaving staff', async () => {
+    const created = await call('post', '/brands/' + seed.brand._id + '/staff', manager)
+      .send({
+        email: 'codes@example.com',
+        fullName: 'Code Staff',
+        password: 'Voucher@123',
+        storeIds: [String(seed.store._id)],
+      })
+      .expect(201);
+    expect(created.body.data.employeeCode).toMatch(/^NV-[A-Z0-9]{6}$/);
+    const list = await call('get', '/brands/' + seed.brand._id + '/staff', manager).expect(200);
+    const codes = list.body.data.map((u: { employeeCode: string }) => u.employeeCode);
+    expect(new Set(codes).size).toBe(codes.length);
+    const byAdmin = await call('post', '/admin/users', admin)
+      .send({ email: 'promote@example.com', fullName: 'Promote', password: 'Voucher@123', role: 'CUSTOMER' })
+      .expect(201);
+    expect(byAdmin.body.data.employeeCode).toBeUndefined();
+    const promoted = await call('patch', '/admin/users/' + byAdmin.body.data.id, admin)
+      .send({ role: 'STORE_STAFF', storeIds: [String(seed.store._id)] })
+      .expect(200);
+    expect(promoted.body.data.employeeCode).toMatch(/^NV-[A-Z0-9]{6}$/);
+    const demoted = await call('patch', '/admin/users/' + byAdmin.body.data.id, admin)
+      .send({ role: 'CUSTOMER', storeIds: [] })
+      .expect(200);
+    expect(demoted.body.data.employeeCode).toBeUndefined();
   });
 });

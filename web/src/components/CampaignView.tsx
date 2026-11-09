@@ -1,4 +1,5 @@
 import { benefit, campaignStatus, dateTime, money, typeLabel } from './format';
+import { staffUnitPrice } from './priceRules';
 import { Badge } from './ui';
 import type { Campaign, Store } from '../types';
 
@@ -25,6 +26,10 @@ export function CampaignSummary({ c, stores }: { c: Campaign; stores?: Store[] }
         <div><span className="muted small">Giá trị</span><div><strong>{money(c.faceValue)}</strong></div></div>
         <div><span className="muted small">Số lượng phát hành</span><div>{c.totalQuantity} (đã bán {c.soldQuantity}, giữ chỗ {c.reservedQuantity})</div></div>
         <div><span className="muted small">Giới hạn mỗi người</span><div>{c.limitPerUser}</div></div>
+        <div>
+          <span className="muted small">Ưu đãi nhân viên</span>
+          <div>{c.staffDiscountPercent ? '-' + c.staffDiscountPercent + '% → ' + money(staffUnitPrice(c.salePrice, c.staffDiscountPercent)) : 'Không áp dụng'}</div>
+        </div>
         <div><span className="muted small">Mở bán</span><div>{dateTime(c.saleStartAt)} → {dateTime(c.saleEndAt)}</div></div>
         <div><span className="muted small">Hạn sử dụng</span><div>{dateTime(c.voucherExpireAt)}</div></div>
       </div>

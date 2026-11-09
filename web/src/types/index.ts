@@ -1,7 +1,8 @@
 export type Role = 'ADMIN' | 'BRAND_OWNER' | 'BRAND_MANAGER' | 'STORE_STAFF' | 'CUSTOMER';
 export type VoucherType = 'DISCOUNT' | 'PREPAID' | 'COMBO';
 export type CampaignStatus = 'DRAFT' | 'PENDING' | 'APPROVED' | 'PUBLISHED' | 'PAUSED' | 'ENDED';
-export type BrandStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+export type BrandStatus = 'DRAFT' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+export type LicenseType = 'BUSINESS_LICENSE' | 'FOOD_SAFETY';
 
 export interface User {
   id: string;
@@ -11,6 +12,7 @@ export interface User {
   active: boolean;
   storeIds: string[];
   brandIds: string[];
+  employeeCode?: string;
   createdAt: string;
 }
 
@@ -28,7 +30,22 @@ export interface Brand {
   description?: string;
   status: BrandStatus;
   reason?: string;
+  documents: BrandDocument[];
+  submittedAt?: string;
+  reviewedAt?: string;
   createdAt: string;
+}
+
+export interface BrandDocument {
+  type: LicenseType;
+  number: string;
+  issuer: string;
+  issuedAt: string;
+  expiresAt?: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string;
 }
 
 export interface Store {
@@ -59,6 +76,7 @@ export interface Campaign {
   soldQuantity: number;
   reservedQuantity: number;
   limitPerUser: number;
+  staffDiscountPercent: number;
   saleStartAt: string;
   saleEndAt: string;
   voucherExpireAt: string;
@@ -83,6 +101,7 @@ export interface CampaignInput {
   comboItems?: string;
   totalQuantity: number;
   limitPerUser?: number;
+  staffDiscountPercent?: number;
   saleStartAt: string;
   saleEndAt: string;
   voucherExpireAt: string;
@@ -101,6 +120,7 @@ export interface BrandReport {
   campaigns: number;
   paidOrders: number;
   ticketsSold: number;
+  staffOrders: number;
   vouchersIssued: number;
   redemptions: number;
   grossRevenue: number;
@@ -129,18 +149,71 @@ export interface Order {
   unitPrice: number;
   totalAmount: number;
   status: 'PENDING' | 'FULFILLED' | 'CANCELLED';
+  expiresAt: string;
   createdAt: string;
-  snapshot: { title: string };
+  employeeCode?: string;
+  listUnitPrice?: number;
+  staffDiscountPercent?: number;
+  snapshot: {
+    title: string;
+    voucherType: VoucherType;
+    faceValue: number;
+    discountType?: string;
+    discountValue?: number;
+    maxDiscount?: number;
+    comboItems?: string;
+    voucherExpireAt: string;
+  };
 }
 
+export type VoucherStatus = 'ACTIVE' | 'USED' | 'REFUND_PENDING' | 'REFUNDED' | 'EXPIRED';
 export interface Voucher {
   id: string;
+  orderId: string;
+  campaignId: string;
   title: string;
+  voucherType: VoucherType;
+  faceValue: number;
+  salePrice: number;
+  discountType?: string;
+  discountValue?: number;
+  maxDiscount?: number;
+  comboItems?: string;
+  staffDiscountPercent?: number;
   usageLimit: number;
   usedCount: number;
   remainingUses: number;
   totalPrice: number;
-  status: string;
+  status: VoucherStatus;
+  expiresAt: string;
+  createdAt: string;
+}
+export interface VoucherDetail extends Voucher {
+  stores: Store[];
+  redemptions: Redemption[];
+}
+export interface RedeemCode {
+  qrPayload: string;
+  otpCode: string;
+  expiresAt: string;
+  ttlSeconds: number;
+}
+/** Campaign as returned by the public catalog (brand populated). */
+export interface PublicCampaign extends Omit<Campaign, 'brandId'> {
+  brandId: { id: string; name: string; logo?: string; description?: string };
+  remainingStock: number;
+  stores?: Store[];
+}
+export interface Paged<T> {
+  items: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
+export interface StaffPrice {
+  percent: number;
+  listPrice: number;
+  staffPrice: number;
 }
 
 export interface Redemption {

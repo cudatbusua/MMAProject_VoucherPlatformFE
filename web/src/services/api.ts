@@ -6,14 +6,22 @@ import type {
   BrandReport,
   Campaign,
   CampaignInput,
+  LicenseType,
   Order,
+  Paged,
+  PublicCampaign,
+  RedeemCode,
   RedeemResult,
   Redemption,
   Refund,
   Role,
+  StaffPrice,
   Stock,
   Store,
   User,
+  Voucher,
+  VoucherDetail,
+  VoucherStatus,
 } from '../types';
 
 export const API_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:4100/api').replace(/\/$/, '');
@@ -66,23 +74,36 @@ function messageOf(body: unknown, fallback: string) {
   return Array.isArray(m) ? m.join('; ') : m || fallback;
 }
 
-async function raw<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
+async function send(method: string, path: string, body: unknown, auth: boolean): Promise<Response> {
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const isForm = body instanceof FormData;
+  if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
   if (auth && accessToken) headers.Authorization = 'Bearer ' + accessToken;
-  let res: Response;
   try {
-    res = await fetch(API_URL + path, {
+    return await fetch(API_URL + path, {
       method,
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, 'Không kết nối được máy chủ ' + API_URL);
   }
+}
+
+async function raw<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
+  const res = await send(method, path, body, auth);
   const json: unknown = await res.json().catch(() => null);
   if (!res.ok) throw new ApiError(res.status, messageOf(json, 'Lỗi ' + res.status));
   return (json as { data: T }).data;
+}
+
+async function rawBlob(path: string): Promise<Blob> {
+  const res = await send('GET', path, undefined, true);
+  if (!res.ok) {
+    const json: unknown = await res.json().catch(() => null);
+    throw new ApiError(res.status, messageOf(json, 'Lỗi ' + res.status));
+  }
+  return res.blob();
 }
 
 let inflight: Promise<AuthResult | null> | null = null;
@@ -106,9 +127,10 @@ export function refreshSession(): Promise<AuthResult | null> {
   return inflight;
 }
 
-async function request<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
+/** Runs fn; on 401 refreshes the session once (shared across callers) and retries. */
+async function withRefresh<T>(fn: () => Promise<T>, auth: boolean): Promise<T> {
   try {
-    return await raw<T>(method, path, body, auth);
+    return await fn();
   } catch (e) {
     if (!(e instanceof ApiError) || e.status !== 401 || !auth) throw e;
     refreshing ??= refreshSession()
@@ -121,8 +143,27 @@ async function request<T>(method: string, path: string, body?: unknown, auth = t
       expiredHandler?.();
       throw new ApiError(401, 'Phiên đăng nhập đã hết hạn.');
     }
-    return raw<T>(method, path, body, auth);
+    return fn();
   }
+}
+
+const request = <T>(method: string, path: string, body?: unknown, auth = true) =>
+  withRefresh(() => raw<T>(method, path, body, auth), auth);
+
+function qs(params: Record<string, string | number | undefined>) {
+  const parts = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v)));
+  return parts.length ? '?' + parts.join('&') : '';
+}
+
+export interface DocumentInput {
+  type: LicenseType;
+  number: string;
+  issuer: string;
+  issuedAt: string;
+  expiresAt?: string;
+  file?: File | null;
 }
 
 const get = <T>(p: string) => request<T>('GET', p);
@@ -181,6 +222,40 @@ export const api = {
   adminOrders: () => get<Order[]>('/admin/orders'),
   adminRedemptions: () => get<Redemption[]>('/admin/redemptions'),
   audits: () => get<Audit[]>('/admin/audit-logs'),
+
+  // Brand licenses
+  uploadDocument: (brandId: string, d: DocumentInput) => {
+    const form = new FormData();
+    form.append('type', d.type);
+    form.append('number', d.number);
+    form.append('issuer', d.issuer);
+    form.append('issuedAt', d.issuedAt);
+    if (d.expiresAt) form.append('expiresAt', d.expiresAt);
+    if (d.file) form.append('file', d.file);
+    return request<Brand>('POST', '/brands/' + brandId + '/documents', form);
+  },
+  submitBrand: (id: string) => patch<Brand>('/brands/' + id + '/submit'),
+  documentFile: (brandId: string, type: LicenseType) =>
+    withRefresh(() => rawBlob('/brands/' + brandId + '/documents/' + type + '/file'), true),
+
+  // Personal purchases (used by staff on web)
+  search: (p: { q?: string; brandId?: string; sort?: string; page?: number; limit?: number }) =>
+    request<Paged<PublicCampaign>>('GET', '/vouchers' + qs(p), undefined, false),
+  campaign: (id: string) => request<PublicCampaign>('GET', '/vouchers/' + id, undefined, false),
+  staffPrice: (campaignId: string, employeeCode: string) =>
+    get<StaffPrice>('/orders/staff-price' + qs({ campaignId, employeeCode })),
+  createOrder: (dto: { campaignId: string; quantity: number; idempotencyKey: string; employeeCode?: string }) =>
+    post<Order>('/orders', dto),
+  myOrders: () => get<Order[]>('/orders/me'),
+  order: (id: string) => get<Order>('/orders/' + id),
+  cancelOrder: (id: string) => post<Order>('/orders/' + id + '/cancel'),
+  payDemo: (id: string) =>
+    post<{ mode: string; message: string; order: Order }>('/orders/' + id + '/simulate-payment', { success: true }),
+  wallet: (status?: VoucherStatus) => get<Voucher[]>('/wallet' + qs({ status })),
+  walletItem: (id: string) => get<VoucherDetail>('/wallet/' + id),
+  redeemToken: (voucherItemId: string) => post<RedeemCode>('/redeem/token', { voucherItemId }),
+  requestRefund: (voucherItemId: string, reason: string) => post<Refund>('/refunds', { voucherItemId, reason }),
+  myRefunds: () => get<Refund[]>('/refunds/me'),
 
   // Owner / manager
   myBrands: () => get<Brand[]>('/brands/me'),

@@ -11,6 +11,7 @@ import { MailService } from './auth/mail.service';
 import { AccessGuard, Public } from './auth/security';
 import { BrandController, CampaignController, SearchController } from './catalog/catalog.controller';
 import { CatalogService } from './catalog/catalog.service';
+import { DocumentsService } from './catalog/documents.service';
 import { validateEnvironment } from './config';
 import { Database, DatabaseModule } from './database/database.module';
 import {
@@ -72,6 +73,7 @@ class HealthController {
     AuthService,
     MailService,
     CatalogService,
+    DocumentsService,
     OrdersService,
     WalletService,
     ThrottlerGuard,

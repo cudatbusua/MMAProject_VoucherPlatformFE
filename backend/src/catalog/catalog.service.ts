@@ -1,9 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { Principal } from '../auth/security';
+import { createWithEmployeeCode } from '../auth/employee-code';
 import { hashPassword } from '../common/crypto';
 import { Database } from '../database/database.module';
-import { CampaignStatus, Role } from '../database/schemas';
+import { BrandStatus, CampaignStatus, Role } from '../database/schemas';
 import {
   CreateBrandDto,
   CampaignDto,
@@ -13,7 +14,7 @@ import {
   UpdateCampaignDto,
   UpdateStoreDto,
 } from './catalog.dto';
-import { validateCampaign } from './rules';
+import { assertBenefitsNotReduced, documentProblem, validateCampaign } from './rules';
 
 @Injectable()
 export class CatalogService {
@@ -39,19 +40,40 @@ export class CatalogService {
   async brandState(
     id: string,
     user: Principal,
-    state: 'APPROVED' | 'REJECTED' | 'SUSPENDED',
+    action: 'approve' | 'reject' | 'suspend' | 'reinstate',
     reason?: string,
   ) {
+    const rules: Record<typeof action, { from: BrandStatus[]; to: BrandStatus; error: string }> = {
+      approve: {
+        from: ['PENDING'],
+        to: 'APPROVED',
+        error: 'Chỉ duyệt thương hiệu đã nộp hồ sơ (Chờ duyệt).',
+      },
+      reject: { from: ['PENDING'], to: 'REJECTED', error: 'Chỉ trả hồ sơ thương hiệu đang chờ duyệt.' },
+      suspend: { from: ['APPROVED'], to: 'SUSPENDED', error: 'Chỉ đình chỉ thương hiệu đang hoạt động.' },
+      reinstate: {
+        from: ['SUSPENDED'],
+        to: 'APPROVED',
+        error: 'Chỉ khôi phục thương hiệu đang bị đình chỉ.',
+      },
+    };
+    const rule = rules[action];
     return this.db.connection.transaction(async (session) => {
       const brand = await this.db.brands.findById(id).session(session);
       if (!brand) throw new NotFoundException();
-      if (state === 'REJECTED' && brand.status !== 'PENDING')
-        throw new BadRequestException('Chỉ từ chối thương hiệu đang chờ duyệt.');
-      brand.status = state;
+      if (!rule.from.includes(brand.status)) throw new BadRequestException(rule.error);
+      if (action === 'approve' || action === 'reinstate') {
+        // Licenses must still be valid at the moment of approval.
+        const problem = documentProblem(brand.documents, 0);
+        if (problem) throw new BadRequestException('Không thể duyệt: ' + problem);
+      }
+      brand.status = rule.to;
       brand.reason = reason;
+      brand.reviewedAt = new Date();
+      brand.reviewedBy = new Types.ObjectId(user.userId);
       await brand.save({ session });
       await this.db.audits.create(
-        [{ actorId: user.userId, action: 'BRAND_' + state, resourceId: id, detail: reason }],
+        [{ actorId: user.userId, action: 'BRAND_' + rule.to, resourceId: id, detail: reason }],
         { session },
       );
       return brand;
@@ -90,7 +112,7 @@ export class CatalogService {
       dto.storeIds.length
     )
       throw new BadRequestException('Cửa hàng không thuộc thương hiệu hoặc đã đóng.');
-    return this.db.users.create({
+    return createWithEmployeeCode(this.db, {
       email: dto.email,
       fullName: dto.fullName,
       role: Role.STORE_STAFF,
@@ -126,6 +148,7 @@ export class CatalogService {
       );
     const merged = { ...existing.toObject(), ...dto };
     validateCampaign(merged);
+    if (existing.soldQuantity + existing.reservedQuantity > 0) assertBenefitsNotReduced(existing, merged);
     await this.storesValid(String(existing.brandId), merged.storeIds.map(String));
     if (merged.totalQuantity < existing.soldQuantity + existing.reservedQuantity)
       throw new BadRequestException('Số lượng phát hành thấp hơn số đã bán và giữ chỗ.');

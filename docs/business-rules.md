@@ -4,21 +4,37 @@
 
 - Mọi role đều được mua, xem đơn/ví của mình, tạo mã sử dụng và yêu cầu hoàn. Email OTP không đổi role tài khoản đã tồn tại.
 - CUSTOMER: mua và dùng voucher cá nhân.
-- BRAND_OWNER: chỉ xem danh sách thương hiệu của mình, tồn kho tổng hợp và số liệu/doanh thu; không tạo/sửa chiến dịch, cửa hàng hoặc nhân viên.
+- BRAND_OWNER: xem danh sách thương hiệu của mình, tồn kho tổng hợp và số liệu/doanh thu; nộp hồ sơ pháp lý của thương hiệu. Không tạo/sửa chiến dịch, cửa hàng hoặc nhân viên.
 - BRAND_MANAGER: quản lý cửa hàng, tạo nhân viên và tạo/sửa/gửi duyệt chiến dịch trong brandIds được admin phân công.
-- STORE_STAFF: email/mật khẩu; chọn chi nhánh được phân công, xác nhận voucher áp dụng tại chi nhánh đó.
+- STORE_STAFF: email/mật khẩu; chọn chi nhánh được phân công, xác nhận voucher áp dụng tại chi nhánh đó. Có mã nhân viên riêng (NV-XXXXXX) để mua voucher thương hiệu mình với giá ưu đãi.
 - ADMIN: tạo/cập nhật tài khoản đủ role, gán phạm vi manager/staff, tạo thương hiệu gắn owner, duyệt/đình chỉ thương hiệu, duyệt chiến dịch, hoàn thủ công và báo cáo. Admin không dùng API redeem thay nhân viên. Đổi quyền/phạm vi/mật khẩu hoặc khóa tài khoản thu hồi toàn bộ phiên.
 
 ## Chiến dịch
 
-- Tất cả loại: tiền VND nguyên, `0 < salePrice < faceValue`.
+- Tất cả loại: tiền VND là bội số 1.000đ, tối thiểu 1.000đ; `salePrice < faceValue` và `salePrice ≥ 30% × faceValue` (giảm tối đa 70%).
+- Đã có vé bán/giữ chỗ thì không được đổi loại voucher hoặc giảm giá trị/quyền lợi (faceValue, discountValue, maxDiscount); muốn đổi phải tạo chiến dịch mới.
+- `staffDiscountPercent` từ 0 đến 50 (0 = không có ưu đãi nhân viên). Giá nhân viên = salePrice × (100 − %) làm tròn xuống 1.000đ, phải ≥ 1.000đ và ≥ 50% salePrice.
 - PREPAID: faceValue là mệnh giá; tiền còn dư không lưu thành số dư sau khi dùng.
 - COMBO: faceValue là giá niêm yết gói; phải có comboItems.
-- DISCOUNT: bắt buộc AMOUNT hoặc PERCENT và discountValue. PERCENT từ 1–100, bắt buộc maxDiscount.
+- DISCOUNT: bắt buộc AMOUNT hoặc PERCENT và discountValue. AMOUNT: faceValue = discountValue. PERCENT từ 1–100, bắt buộc maxDiscount và faceValue = maxDiscount.
 - saleStartAt < saleEndAt; voucherExpireAt >= saleEndAt + 10 ngày. Thời gian truyền ISO-8601 có timezone; MongoDB lưu UTC.
 - Cửa hàng phải thuộc thương hiệu và đang hoạt động. Chỉ thương hiệu APPROVED được gửi duyệt/mở bán.
 - Sửa chiến dịch đã được duyệt/mở bán/tạm dừng đưa về PENDING; chiến dịch PENDING cần rút về DRAFT để sửa. Không sửa ENDED.
 - PUBLISHED/APPROVED tới giờ bán, chưa hết giờ và thương hiệu APPROVED mới xuất hiện công khai. Hết tồn kho vẫn có thể hiển thị với remainingStock=0; API mua từ chối. Không có trạng thái SOLD_OUT riêng ở bản mới.
+
+## Hồ sơ pháp lý thương hiệu
+
+- Thương hiệu mới ở trạng thái DRAFT. Chủ thương hiệu (BRAND_OWNER) nộp **giấy phép kinh doanh** và **chứng nhận an toàn thực phẩm**: số giấy, cơ quan cấp, ngày cấp, ngày hết hạn (bắt buộc với ATTP) và file PDF/PNG/JPG ≤ 5MB (kiểm tra theo nội dung file, không tin phần mở rộng).
+- Gửi duyệt (DRAFT/REJECTED → PENDING) khi đủ 2 giấy tờ, ngày cấp không ở tương lai, chứng nhận ATTP còn hạn ít nhất 30 ngày. Khi PENDING/APPROVED không sửa được giấy tờ.
+- Admin xem file (chỉ admin, owner và manager của thương hiệu tải được file) rồi duyệt (PENDING → APPROVED, giấy tờ phải còn hạn) hoặc trả hồ sơ kèm lý do (→ REJECTED, owner sửa và gửi lại). Đình chỉ APPROVED → SUSPENDED; khôi phục SUSPENDED → APPROVED khi giấy tờ còn hạn.
+- File lưu trong `backend/uploads` (UPLOAD_DIR), tên file ngẫu nhiên, không đưa lên Git.
+
+## Nhân viên mua voucher
+
+- Mọi STORE_STAFF có mã nhân viên duy nhất, cấp khi tạo tài khoản hoặc khi đổi role sang STORE_STAFF, xóa khi rời role.
+- Staff mua mọi voucher với giá thường. Nhập mã nhân viên khi đặt đơn (`employeeCode`) để được giá nhân viên nếu: mã đúng là của chính tài khoản đang đăng nhập, chiến dịch thuộc thương hiệu có cửa hàng staff được phân công, và chiến dịch có `staffDiscountPercent > 0`. Xem trước giá: `GET /api/orders/staff-price`.
+- Đơn lưu `employeeCode`, `listUnitPrice`, `staffDiscountPercent`; `unitPrice`/`totalAmount` là giá thực trả. Voucher lưu giá mỗi vé đã trả; hoàn tiền trả đúng số đã thanh toán. Cùng idempotencyKey mà khác mã bị từ chối.
+- Staff không tự xác nhận voucher của mình; nhân viên khác xác nhận. Báo cáo thương hiệu có `staffOrders`.
 
 ## Mua và thanh toán
 

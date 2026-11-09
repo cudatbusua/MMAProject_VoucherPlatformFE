@@ -26,6 +26,7 @@ import { hashPassword } from '../common/crypto';
 import { ObjectIdPipe } from '../common/http';
 import { Database } from '../database/database.module';
 import { Role } from '../database/schemas';
+import { createWithEmployeeCode, ensureEmployeeCode } from './employee-code';
 import { CurrentUser, Principal, Roles } from './security';
 
 class OwnerDto {
@@ -102,7 +103,7 @@ export class AdminUsersController {
     const brandIds = dto.brandIds ?? [],
       storeIds = dto.storeIds ?? [];
     await this.validateScopes(dto.role, brandIds, storeIds);
-    return this.db.users.create({
+    return createWithEmployeeCode(this.db, {
       email: dto.email,
       fullName: dto.fullName,
       role: dto.role,
@@ -144,6 +145,7 @@ export class AdminUsersController {
             storeIds: storeIds.map((v) => new Types.ObjectId(v)),
             ...(passwordHash ? { passwordHash } : {}),
           },
+          ...(role !== Role.STORE_STAFF ? { $unset: { employeeCode: 1 } } : {}),
         },
         { session, returnDocument: 'after', runValidators: true },
       );
@@ -151,6 +153,10 @@ export class AdminUsersController {
       await this.db.audits.create([{ actorId: actor.userId, action: 'ACCOUNT_UPDATED', resourceId: id }], {
         session,
       });
+      if (role === Role.STORE_STAFF && !saved?.employeeCode) {
+        await ensureEmployeeCode(this.db, id, session);
+        return this.db.users.findById(id).session(session);
+      }
       return saved;
     });
   }

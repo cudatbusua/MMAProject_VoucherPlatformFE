@@ -46,12 +46,13 @@ MongoDB hiện đã được cài binary riêng trong `.cache/mongodb`; dữ li�
 | admin@voucher.local | ADMIN |
 | owner@voucher.local | BRAND_OWNER — chỉ xem số liệu thương hiệu |
 | manager@voucher.local | BRAND_MANAGER — tạo và vận hành chiến dịch |
-| staff@voucher.local | STORE_STAFF — quét vé và mua vé cá nhân |
+| staff@voucher.local | STORE_STAFF — quét vé, mua vé cá nhân; mã nhân viên `NV-STAFF1` |
+| staff2@voucher.local | STORE_STAFF — đồng nghiệp xác nhận vé của staff; mã `NV-STAFF2` |
 | customer@voucher.local | CUSTOMER |
 
 Người mua có thể dùng email + OTP; email đã có tài khoản giữ nguyên role, email mới tạo CUSTOMER. Tài khoản mẫu cũng đăng nhập được bằng mật khẩu để test. Owner chỉ đọc số liệu trong nghiệp vụ thương hiệu; mọi role vẫn được mua và quản lý ví cá nhân. Mặc định `MAIL_PROVIDER=local`: OTP xuất hiện trong terminal BE, **không gửi email thật**. API không trả OTP trong response. Muốn gửi email thật: đặt `MAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `MAIL_FROM_EMAIL` là sender đã xác thực rồi khởi động lại BE. Không đưa khóa vào GitHub.
 
-Seed có 1 thương hiệu, 2 cửa hàng với tọa độ mẫu TP.HCM và 7 chiến dịch giá 30K–100K. Đây là dữ liệu giả để kiểm thử, không phải cửa hàng đã được xác minh. Chạy lại seed bằng `npm.cmd run db:seed`; chỉ thêm bản ghi chưa có, không ghi đè dữ liệu đã sửa.
+Seed có thương hiệu đã duyệt “Vouch Coffee” (kèm giấy phép kinh doanh và chứng nhận ATTP mẫu dạng PDF), thương hiệu nháp “Trà Sữa Mây” để demo nộp hồ sơ, 2 cửa hàng với tọa độ mẫu TP.HCM và 7 chiến dịch giá 30K–100K (3 chiến dịch có ưu đãi nhân viên 15–30%). Đây là dữ liệu giả để kiểm thử, không phải cửa hàng đã được xác minh. Chạy lại seed bằng `npm.cmd run db:seed`; chỉ thêm bản ghi chưa có, không ghi đè dữ liệu đã sửa.
 
 ## Cài ở máy khác
 
@@ -76,7 +77,9 @@ MongoDB Atlas cũng dùng được: đổi `MONGODB_URI` sang URI của cluster 
 - JWT + refresh token luân phiên + logout thu hồi phiên; phân quyền 5 vai trò (ADMIN, BRAND_OWNER, BRAND_MANAGER, STORE_STAFF, CUSTOMER).
 - Đăng nhập khách hàng OTP, tự tạo CUSTOMER lần đầu; giới hạn gửi lại, số lần nhập và thời hạn mã.
 - Admin tạo tài khoản, gán owner/thương hiệu cho manager; manager tạo cửa hàng, nhân viên và chiến dịch. Owner chỉ xem số liệu/doanh thu thuộc thương hiệu của mình.
-- Duyệt thương hiệu, đình chỉ/khôi phục; chiến dịch nháp → chờ duyệt → được duyệt/mở bán, tạm dừng và duyệt lại sau chỉnh sửa.
+- Hồ sơ pháp lý thương hiệu: owner nộp giấy phép kinh doanh + chứng nhận an toàn thực phẩm (PDF/ảnh), admin xem file và duyệt/trả hồ sơ; đình chỉ/khôi phục.
+- Chiến dịch nháp → chờ duyệt → được duyệt/mở bán, tạm dừng và duyệt lại sau chỉnh sửa. Ràng buộc giá: bội số 1.000đ, giảm tối đa 70%, giá trị DISCOUNT khớp mức giảm, không giảm quyền lợi khi đã bán.
+- Nhân viên mua voucher; nhập mã nhân viên để được giá ưu đãi (manager đặt 0–50% cho từng chiến dịch) với voucher của thương hiệu mình.
 - Ba loại voucher DISCOUNT/PREPAID/COMBO, kiểm tra giá và thời gian, cửa hàng áp dụng.
 - Danh mục, tìm kiếm, sắp xếp, phân trang, lọc khoảng cách bằng GeoJSON/2dsphere.
 - Đơn hàng cho từng loại voucher, giữ chỗ 15 phút, giới hạn mua, hủy/đơn hết hạn trả tồn kho.
@@ -104,3 +107,14 @@ Test chức năng khởi chạy replica set tạm riêng rồi xóa database tes
 Các file cấu hình mẫu, mã nguồn và `package-lock.json` có thể đưa lên GitHub. `.env`, dữ liệu `.data`, binary `.cache`, `node_modules` và `dist` đã nằm trong `.gitignore`. Repository: [MMAProject_VoucherPlatformFE](https://github.com/cudatbusua/MMAProject_VoucherPlatformFE). Khung hiện gồm backend, web và mobile trong cùng repo.
 
 Xem [kịch bản Swagger](docs/demo-api.md), [thiết kế database](docs/database.md), [quy tắc nghiệp vụ](docs/business-rules.md), [phân quyền và voucher nhiều lượt](docs/permissions-and-multi-use.md).
+
+## Kịch bản demo (web + mobile)
+
+Chạy MongoDB, backend, web (`cd web; npm.cmd run dev`) và mobile (`cd mobile; npx expo start`), mật khẩu tài khoản mẫu `Voucher@123`.
+
+1. **owner** → *Hồ sơ pháp lý* → chọn “Trà Sữa Mây”, tải giấy phép kinh doanh và chứng nhận ATTP (PDF/ảnh) → *Gửi duyệt*.
+2. **admin** → *Thương hiệu* → *Xem hồ sơ & duyệt* → xem file → *Trả hồ sơ* (có lý do) hoặc *Duyệt thương hiệu*.
+3. **manager** → *Chiến dịch* → *Tạo chiến dịch*: thử giá lẻ/giảm quá 70% để thấy báo lỗi; đặt *Ưu đãi nhân viên* 20% → *Gửi duyệt*; **admin** → *Duyệt chiến dịch*.
+4. **customer** (app mobile) mua voucher, thanh toán demo, tạo QR/OTP; **staff** (web) → *Xác nhận voucher*.
+5. **staff** → *Mua voucher* → nhập mã `NV-STAFF1` → *Áp dụng* (giá nhân viên) → đặt đơn, thanh toán demo → *Ví của tôi* → tạo mã. Staff tự xác nhận bị chặn; **staff2** xác nhận được.
+6. **manager/owner** xem báo cáo: doanh thu, số đơn giá nhân viên.
