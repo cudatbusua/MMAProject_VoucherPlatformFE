@@ -48,9 +48,9 @@ MongoDB hiện đã được cài binary riêng trong `.cache/mongodb`; dữ li�
 | manager@voucher.local | BRAND_MANAGER — tạo và vận hành chiến dịch |
 | staff@voucher.local | STORE_STAFF — quét vé, mua vé cá nhân; mã nhân viên `NV-STAFF1` |
 | staff2@voucher.local | STORE_STAFF — đồng nghiệp xác nhận vé của staff; mã `NV-STAFF2` |
-| customer@voucher.local | CUSTOMER |
+| customer@voucher.local | CUSTOMER — app mobile, **chỉ đăng nhập bằng OTP** (mã in ở terminal backend) |
 
-Người mua có thể dùng email + OTP; email đã có tài khoản giữ nguyên role, email mới tạo CUSTOMER. Tài khoản mẫu cũng đăng nhập được bằng mật khẩu để test. Owner chỉ đọc số liệu trong nghiệp vụ thương hiệu; mọi role vẫn được mua và quản lý ví cá nhân. Mặc định `MAIL_PROVIDER=local`: OTP xuất hiện trong terminal BE, **không gửi email thật**. API không trả OTP trong response. Muốn gửi email thật: đặt `MAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `MAIL_FROM_EMAIL` là sender đã xác thực rồi khởi động lại BE. Không đưa khóa vào GitHub.
+Người mua có thể dùng email + OTP; email đã có tài khoản giữ nguyên role, email mới tạo CUSTOMER. Khách hàng chỉ đăng nhập bằng OTP (API `/auth/login` từ chối role CUSTOMER); các tài khoản mẫu còn lại đăng nhập web bằng mật khẩu. Owner chỉ đọc số liệu trong nghiệp vụ thương hiệu; mọi role vẫn được mua và quản lý ví cá nhân. Mặc định `MAIL_PROVIDER=local`: OTP xuất hiện trong terminal BE, **không gửi email thật**. API không trả OTP trong response. Muốn gửi email thật: đặt `MAIL_PROVIDER=brevo`, `BREVO_API_KEY`, `MAIL_FROM_EMAIL` là sender đã xác thực rồi khởi động lại BE. Không đưa khóa vào GitHub.
 
 Seed có thương hiệu đã duyệt “Vouch Coffee” (kèm giấy phép kinh doanh và chứng nhận ATTP mẫu dạng PDF), thương hiệu nháp “Trà Sữa Mây” để demo nộp hồ sơ, 2 cửa hàng với tọa độ mẫu TP.HCM và 7 chiến dịch giá 30K–100K (3 chiến dịch có ưu đãi nhân viên 15–30%). Đây là dữ liệu giả để kiểm thử, không phải cửa hàng đã được xác minh. Chạy lại seed bằng `npm.cmd run db:seed`; chỉ thêm bản ghi chưa có, không ghi đè dữ liệu đã sửa.
 
@@ -109,6 +109,8 @@ Các file cấu hình mẫu, mã nguồn và `package-lock.json` có thể đưa
 Xem [kịch bản Swagger](docs/demo-api.md), [thiết kế database](docs/database.md), [quy tắc nghiệp vụ](docs/business-rules.md), [phân quyền và voucher nhiều lượt](docs/permissions-and-multi-use.md).
 
 ## Kịch bản demo (web + mobile)
+
+Hướng dẫn chi tiết từng bước (ai làm, ở đâu, kết quả cần thấy): [docs/demo-flows.md](docs/demo-flows.md).
 
 Chạy MongoDB, backend, web (`cd web; npm.cmd run dev`) và mobile (`cd mobile; npx expo start`), mật khẩu tài khoản mẫu `Voucher@123`.
 

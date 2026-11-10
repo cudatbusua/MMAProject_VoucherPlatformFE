@@ -20,7 +20,7 @@ npx expo start            # nhấn a để mở Android Emulator, w để mở b
 
 | Tab / màn hình | API |
 |---|---|
-| Đăng nhập OTP email (hoặc mật khẩu cho tài khoản mẫu) | `auth/otp/request`, `auth/otp/verify`, `auth/login`, `auth/refresh` |
+| Đăng nhập **chỉ bằng OTP email** (khách hàng không có mật khẩu; API `auth/login` từ chối role CUSTOMER) | `auth/otp/request`, `auth/otp/verify`, `auth/refresh` |
 | Khám phá: tìm kiếm, danh mục, sắp xếp, “Gần tôi” theo bán kính, cuộn trang | `categories`, `vouchers` |
 | Chi tiết voucher, chọn số lượng, thêm giỏ / mua ngay | `vouchers/:id` |
 | Giỏ hàng (lưu trên máy) → mỗi dòng tạo một đơn, có `idempotencyKey` | `orders` |

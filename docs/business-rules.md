@@ -3,7 +3,7 @@
 ## Phân quyền
 
 - Mọi role đều được mua, xem đơn/ví của mình, tạo mã sử dụng và yêu cầu hoàn. Email OTP không đổi role tài khoản đã tồn tại.
-- CUSTOMER: mua và dùng voucher cá nhân.
+- CUSTOMER: mua và dùng voucher cá nhân; chỉ đăng nhập bằng OTP email (không đăng nhập bằng mật khẩu).
 - BRAND_OWNER: xem danh sách thương hiệu của mình, tồn kho tổng hợp và số liệu/doanh thu; nộp hồ sơ pháp lý của thương hiệu. Không tạo/sửa chiến dịch, cửa hàng hoặc nhân viên.
 - BRAND_MANAGER: quản lý cửa hàng, tạo nhân viên và tạo/sửa/gửi duyệt chiến dịch trong brandIds được admin phân công.
 - STORE_STAFF: email/mật khẩu; chọn chi nhánh được phân công, xác nhận voucher áp dụng tại chi nhánh đó. Có mã nhân viên riêng (NV-XXXXXX) để mua voucher thương hiệu mình với giá ưu đãi.

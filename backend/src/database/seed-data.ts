@@ -157,7 +157,8 @@ export async function seedData(db: Database, password: string) {
   );
   const customer = await db.users.findOneAndUpdate(
     { email: 'customer@voucher.local' },
-    { $setOnInsert: { fullName: 'Khách hàng mẫu', role: Role.CUSTOMER, active: true, passwordHash: hash } },
+    // No password: customers sign in with an email OTP only.
+    { $setOnInsert: { fullName: 'Khách hàng mẫu', role: Role.CUSTOMER, active: true } },
     { upsert: true, returnDocument: 'after' },
   );
   const definitions = [

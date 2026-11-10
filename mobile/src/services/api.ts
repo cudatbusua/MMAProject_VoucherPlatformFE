@@ -145,8 +145,6 @@ export const api = {
     request<{ message: string; expiresIn: number }>('POST', '/auth/otp/request', { email }, false),
   verifyOtp: (email: string, code: string) =>
     request<AuthResult>('POST', '/auth/otp/verify', { email, code }, false),
-  login: (email: string, password: string) =>
-    request<AuthResult>('POST', '/auth/login', { email, password }, false),
   logout: () => request<{ success: boolean }>('POST', '/auth/logout'),
   me: () => request<User>('GET', '/users/me'),
   updateMe: (fullName: string) => request<User>('PATCH', '/users/me', { fullName }),

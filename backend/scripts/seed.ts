@@ -14,7 +14,7 @@ async function main() {
       throw new Error('Set SEED_PASSWORD (minimum 8 characters) in .env first.');
     const data = await seedData(app.get(Database), password);
     console.log(
-      'Seed ready: admin@voucher.local, owner@voucher.local, manager@voucher.local, staff@voucher.local (NV-STAFF1), staff2@voucher.local (NV-STAFF2), customer@voucher.local. Password: SEED_PASSWORD from .env.',
+      'Seed ready: admin@voucher.local, owner@voucher.local, manager@voucher.local, staff@voucher.local (NV-STAFF1), staff2@voucher.local (NV-STAFF2), customer@voucher.local (OTP login only; code printed in the API console). Password for the others: SEED_PASSWORD from .env.',
     );
     console.log('Brand ID: ' + data.brand._id + ' | Store ID: ' + data.store._id);
     console.log(

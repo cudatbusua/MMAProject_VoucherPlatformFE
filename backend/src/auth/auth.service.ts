@@ -102,6 +102,11 @@ export class AuthService {
     const user = await this.db.users.findOne({ email, active: true }).select('+passwordHash');
     if (!(await verifyPassword(password, user?.passwordHash)) || !user)
       throw new UnauthorizedException('Email hoặc mật khẩu không đúng.');
+    // Customers sign in with an email OTP only; password login is for back-office roles.
+    if (user.role === Role.CUSTOMER)
+      throw new ForbiddenException(
+        'Tài khoản khách hàng đăng nhập bằng mã OTP qua email trên ứng dụng di động.',
+      );
     const refreshToken = randomToken();
     const saved = await this.db.sessions.create({
       userId: user._id,

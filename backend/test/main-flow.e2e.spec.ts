@@ -538,9 +538,28 @@ describe('Voucher API with real MongoDB replica-set transactions', () => {
     await call('get', '/admin/reports/overview', owner).expect(403);
   });
   it('all five roles can buy and receive a private wallet without changing role', async () => {
-    const login = await call('post', '/auth/login')
+    // Customers cannot use password login, only email OTP.
+    await call('post', '/auth/login')
       .send({ email: 'customer@voucher.local', password: 'Voucher@123' })
+      .expect(401);
+    // Even a customer account that an admin created with a password is refused, with a hint to use OTP.
+    await call('post', '/admin/users', admin)
+      .send({
+        email: 'pwcustomer@example.com',
+        fullName: 'Pw Customer',
+        password: 'Voucher@123',
+        role: 'CUSTOMER',
+      })
       .expect(201);
+    const pw = await call('post', '/auth/login')
+      .send({ email: 'pwcustomer@example.com', password: 'Voucher@123' })
+      .expect(403);
+    expect(pw.body.error.message).toContain('OTP');
+    await call('post', '/auth/otp/request').send({ email: 'customer@voucher.local' }).expect(201);
+    const login = await call('post', '/auth/otp/verify')
+      .send({ email: 'customer@voucher.local', code: codes.get('customer@voucher.local') })
+      .expect(201);
+    expect(login.body.data.user.role).toBe('CUSTOMER');
     for (const token of [admin, owner, manager, staff, login.body.data.accessToken]) {
       const order = await checkout(token, String(seed.campaigns[1]._id)).expect(201);
       await call('post', '/orders/' + order.body.data.id + '/simulate-payment', token)
